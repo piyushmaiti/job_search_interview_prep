@@ -18,6 +18,18 @@ It runs on your own computer. Your documents stay in a folder here, and nothing 
 
 **It never invents your experience.** Everything about you has to come from your documents and is marked with the document it came from. General advice is marked `model knowledge`. Anything your documents do not cover is shown as a `GAP:` line for you to fill in. Figures that appear in a draft but in none of your documents are flagged for you to check. Models can still make mistakes, so read every draft before you use it.
 
+## 🖼️ Screenshots
+
+**The Profile page:** upload your CV once, add an optional "about you" and publications, and build your profile.
+
+![The Profile page](docs/screenshot-profile.png)
+
+**A role's page:** sources on the left, the conversation in the middle, the evidence for each citation on the right. The tabs above switch between Research, Prep tools and Mock interview.
+
+![A role's Research page](docs/screenshot-role.png)
+
+These screenshots use made-up sample data and the offline demo mode.
+
 ## ✨ Features
 
 **🧑‍💼 Your profile and roles**
