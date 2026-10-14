@@ -51,7 +51,6 @@ These screenshots use made-up sample data and the offline demo mode.
 **🔐 Privacy and use**
 - Runs on your own computer, with your private files in `workspace/`, which git never uploads.
 - Your CV, profile and job text go to Claude (or a local Ollama model) without a question, and you are asked first before they go to any other provider.
-- A Morning and Night theme, a command-line version, an offline demo mode, and phone access over your home Wi-Fi with a passcode.
 
 Planned, not built yet: voice for the mock interview.
 
