@@ -223,7 +223,9 @@ Web search is off by default, so nothing uses the API unless you switch it on. T
 
 ## 🔒 Privacy and safety
 
-These are enforced in code and covered by tests.
+> **A note on security.** Neither of us is a security expert or a software engineer, so we are not sure the tool has no leaks. The security checks were done by Claude, an AI model. It read the code and reported problems, and the problems it found were fixed. Claude did not attack the running app, and no human security expert has checked it. This is not a professional security audit. Please do not rely on it for highly sensitive data, and tell us if you find a problem.
+
+The points below are enforced in code and covered by automated tests, which were also written with Claude.
 
 - **What leaves your machine:** your question and the passages chosen for it go to the provider you use (Anthropic, Google, or Ollama's cloud for `:cloud` models). That is usually a few passages, whole short documents, or, only when you choose Whole project, Explore or Build knowledge, the files of a project. Indexing and retrieval run locally. A local Ollama model keeps everything on your machine.
 - **Project code is opt-in.** Whenever a question's context includes project code, or follows a turn that did, you are asked which provider may receive it. There is no default, nothing is remembered, compare mode asks again, and a non-interactive terminal answers "cancel".
