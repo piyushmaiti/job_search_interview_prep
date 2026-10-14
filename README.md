@@ -2,7 +2,7 @@
 
 ## 👋 About this project
 
-We built this application out of curiosity, and because we were tired of running around between notes, PDFs and code bases to remember or summarize what we had done over the years. We are not software engineers. We built this tool out of curiosity and to test how much we could build using Claude Code. It became a personal project to learn the applications and usage of RAG (retrieval-augmented generation), harnesses and agents, and how to integrate them for our own use case.
+This application started out of curiosity, interest, and some frustration. Notes, PDFs, and codebases were scattered everywhere. Remembering or summarizing years of work meant jumping between multiple files, research papers, and codebases. Neither of us is a software engineer, and we built much of the structure and design along the way with Claude's help. The goal was to make our lives easier and to test how much Claude Code could build. It became a personal project to learn RAG (retrieval-augmented generation), harnesses, and agents, and how to bring them together for a specific use case. It may not be a perfect tool, but it taught a lot about the current technologies in the field of artificial intelligence. Updates may come slowly. Next steps include strengthening the existing extraction features while learning more, and fixing the interface and design problems that affect how people use it.
 
 ## 🎯 What it is
 
@@ -17,10 +17,6 @@ Give it your CV, a few lines about yourself and your publications once. For each
 It runs on your own computer. Your documents stay in a folder here, and nothing is uploaded anywhere except the passages sent to the model provider you choose.
 
 **It never invents your experience.** Everything about you has to come from your documents and is marked with the document it came from. General advice is marked `model knowledge`. Anything your documents do not cover is shown as a `GAP:` line for you to fill in. Figures that appear in a draft but in none of your documents are flagged for you to check. Models can still make mistakes, so read every draft before you use it.
-
-## 🖼️ Screenshots
-
-**The Profile page:** upload your CV once, add an optional "about you" and publications, and build your profile.
 
 ![The Profile page](docs/screenshot-profile.png)
 
