@@ -287,15 +287,28 @@ def _review_section(complete, rebuild_index) -> None:
             st.caption("The tool never fills these in. Add the missing detail to your CV or text and read the document again.")
 
     if pend:
+        groups = extract.review_groups(data)
+        st.caption("Open a section, then decide for the whole section at once or item by item. An item you decide on overrides the section choice.")
         with st.form("review-form"):
-            for it in pend:
-                st.markdown(_item_title(it))
-                st.text_area("Item", value=it["text"], key=f"rv_text_{it['id']}", label_visibility="collapsed", height=70)
-                st.caption("From your file: \u201c" + it["evidence"] + "\u201d")
-                st.radio("Decision", ["Decide later", "Accept", "Remove"], key=f"rv_dec_{it['id']}", horizontal=True, label_visibility="collapsed")
+            for section, glist in groups:
+                if section == "Experience":
+                    st.markdown("**Experience**")
+                for gkey, title, items in glist:
+                    label = f"{title} ({len(items)})" if section != "Experience" else f"{title}, {len(items)} item{'s' if len(items) != 1 else ''}"
+                    with st.expander(label, expanded=False):
+                        st.radio("Whole group", ["Decide later", "Accept all", "Remove all"], key=f"rv_grp_{gkey}", horizontal=True,
+                                 help="Applies to every item below that you leave on 'Decide later'.")
+                        for it in items:
+                            st.markdown(_item_title(it))
+                            st.text_area("Item", value=it["text"], key=f"rv_text_{it['id']}", label_visibility="collapsed", height=68)
+                            st.caption("Your words: \u201c" + " ... ".join(extract.evidence_list(it)) + "\u201d")
+                            st.radio("Decision", ["Decide later", "Accept", "Remove"], key=f"rv_dec_{it['id']}", horizontal=True, label_visibility="collapsed")
             if st.form_submit_button("Apply decisions", type="primary"):
+                group_of = {it["id"]: gkey for _s_, gl in groups for gkey, _t, items in gl for it in items}
                 for it in pend:
                     dec = S.get(f"rv_dec_{it['id']}", "Decide later")
+                    if dec == "Decide later":
+                        dec = {"Accept all": "Accept", "Remove all": "Remove"}.get(S.get(f"rv_grp_{group_of.get(it['id'])}", "Decide later"), "Decide later")
                     text = S.get(f"rv_text_{it['id']}", it["text"])
                     if dec == "Accept":
                         extract.set_status(data, it["id"], "accepted", text)
@@ -324,7 +337,7 @@ def _review_section(complete, rebuild_index) -> None:
             st.caption("Claude gave these, but the words it quoted are not in your file, so they cannot be accepted.")
             for it in bad:
                 st.markdown(f"{extract.KIND_NAMES[it['kind']]} from {it['source']}: {it['text']}")
-                st.caption("Quoted: \u201c" + it["evidence"] + "\u201d")
+                st.caption("Quoted: \u201c" + " ... ".join(extract.evidence_list(it)) + "\u201d")
             if st.button("Dismiss these", key="dismiss-bad"):
                 extract.dismiss_unmatched(data)
                 extract.save(data)

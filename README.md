@@ -30,7 +30,7 @@ These screenshots use made-up sample data and the offline demo mode.
 
 **🧑‍💼 Your profile and roles**
 - One shared profile built from your CV (PDF, Word, Markdown or text), an optional "about you" text and optional publications. You can read and correct it.
-- Every file you save is read by Claude and turned into organised items (positions, work, results, publications, credentials, goals). Each item shows the exact words of your file it came from. You accept, correct or remove each one. Only accepted items go to the prep tools. Anything not found in your file is set aside, and missing dates or results are listed as gaps.
+- Every file you save is read by Claude and turned into organised items, grouped by section like a CV (jobs, credentials, papers, abstracts, talks, skills, awards, service, extracurriculars, recommendations). Each item shows the exact words of your file it came from. You accept, correct or remove each one. Only accepted items go to the prep tools. Anything not found in your file is set aside, and missing dates or results are listed as gaps.
 - One tab per role, marked Industry or Academic. Each role has its own pasted job description (saved as a Markdown file), your intent, a CV for that role, and its own chats.
 
 **📚 Research, in every role**
@@ -53,7 +53,7 @@ Planned, not built yet: voice for the mock interview.
 
 ## 🧭 How it is organised
 
-1. **Profile** (the first tab): upload your CV (PDF, Word, Markdown or text), write a short "about you" and add publications. Each time you save one, Claude reads it and lists what it found under **Review what was found**: positions, work, results, publications, credentials and goals, each with the exact words of your file it came from. You accept, edit or remove each item, and only accepted items go to the prep tools. Anything Claude gave that is not in your file is set aside. Missing dates and results are listed as gaps and never filled in. You can also press **Build my profile** for a written profile. All roles share your profile.
+1. **Profile** (the first tab): upload your CV (PDF, Word, Markdown or text), write a short "about you" and add publications. Each time you save one, Claude reads it and lists what it found under **Review what was found**, organised like a CV: education and credentials, one group per job (with a few merged items each, not one per bullet), papers, conference abstracts and posters, talks, skills, awards, service, teaching, extracurriculars, recommendations and your own words. Each item shows the exact words of your file it came from and keeps your wording. You accept, edit or remove an item, or decide for a whole section at once, and only accepted items go to the prep tools. Anything Claude gave that is not in your file is set aside. Missing dates and results are listed as gaps and never filled in. You can also press **Build my profile** for a written profile. All roles share your profile.
 2. **A tab per role** (**+ New role**): the title, the company, whether it is an **Industry** or **Academic** role, the pasted job description (saved as a Markdown file), your intent, and the CV for this role (or your main one).
 3. Inside a role, pick **Research**, **Prep tools** or **Mock interview**. Each role keeps its own chats, results and interviews. Prep tools and the mock interview use Claude through your Claude Code login (the `claude` command) and need a built profile or CV and a job description.
 

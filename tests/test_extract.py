@@ -224,3 +224,94 @@ def test_facts_json_is_not_something_the_search_would_index():
     cfg = settings.load_config()
     profile = next(d for d in cfg["docs"] if d["name"] == "Profile")
     assert ".json" not in profile["exts"]
+
+
+# ---------------------------------------------------------------- merged items, whole-bullet quotes and CV sections
+DOC = ("# Alex Doe\n\nJ. Smith lab, Example University\n\n## Experience\nResearch assistant, Example Lab, 2020 to 2022\n"
+       "- Built the scanner pipeline in Python and documented it for the team.\n- Ran quality control on 400 scans a week.\n- Mentored two students.\n"
+       "## Papers\n- Doe A. A study of scanners. Journal of Examples, 2022.\n- Doe A. More on scanners. Journal of Examples, 2023.\n"
+       "## Abstracts\n- Doe A. Early scanner results. Example Conference, 2021.\n## Talks\n- Doe A. Scanners in practice. Example Meeting, 2023.\n"
+       "## Skills\nProgramming: Python, MATLAB\n## Service\nReviewer for the Journal of Examples\n## Interests\nVolunteers at a food bank\n")
+
+
+def item(i, kind, text, evidence, label="fact", **fields):
+    return {"id": i, "kind": kind, "label": label, "text": text, "evidence": evidence, **fields}
+
+
+ITEMS = [
+    item("p1", "position", "Research assistant at Example Lab", "Research assistant, Example Lab, 2020 to 2022", title="Research assistant", organisation="Example Lab", start="2020", end="2022"),
+    item("w1", "work", "Built the scanner pipeline in Python and documented it for the team; ran quality control on 400 scans a week",
+         ["Built the scanner pipeline in Python and documented it for the team.", "Ran quality control on 400 scans a week."], position="p1"),
+    item("w2", "work", "Mentored two students", "Mentored two students.", position="p1"),
+    item("b1", "publication", "A study of scanners", "Doe A. A study of scanners. Journal of Examples, 2022.", type="paper", year="2022"),
+    item("b2", "publication", "More on scanners", "Doe A. More on scanners. Journal of Examples, 2023.", type="paper", year="2023"),
+    item("b3", "publication", "Early scanner results", "Doe A. Early scanner results. Example Conference, 2021.", type="abstract", year="2021"),
+    item("b4", "publication", "Scanners in practice", "Doe A. Scanners in practice. Example Meeting, 2023.", type="talk", year="2023"),
+    item("k1", "skill", "Programming: Python, MATLAB", "Programming: Python, MATLAB"),
+    item("a1", "activity", "Reviewer for the Journal of Examples", "Reviewer for the Journal of Examples", category="service"),
+    item("a2", "activity", "Volunteers at a food bank", "Volunteers at a food bank", category="volunteering"),
+]
+
+
+def test_the_instructions_ask_for_merged_items_whole_quotes_the_persons_words_and_no_header():
+    s = extract.SYSTEM
+    assert "Do NOT make one item per bullet" in s and "at most 5" in s and "Never split one bullet" in s
+    assert "WHOLE bullet" in s and "list of one to four EXACT copies" in s
+    assert "OWN words" in s and "orchestrates" in s
+    assert "Skip the header block" in s and "one \"skill\" item per line" in s
+    assert "referees" in s and "by role only" in s
+    for word in ("recommendation", "extracurricular", "talk", "poster", "award", "service"):
+        assert word in s
+
+
+def test_an_item_may_quote_several_bullets_and_every_quote_must_be_in_the_file():
+    data = stored(text=DOC, items=ITEMS)
+    merged = next(i for i in data["items"] if i["text"].startswith("Built the scanner pipeline"))
+    assert merged["status"] == "pending" and len(merged["evidence"]) == 2
+    bad = stored(text=DOC, items=[{**ITEMS[1], "evidence": [ITEMS[1]["evidence"][0], "A bullet that is not in the file at all."]}])
+    assert [i["status"] for i in bad["items"]] == ["unmatched"]
+
+
+def test_old_items_with_one_quote_as_a_string_still_work():
+    assert extract.evidence_list({"evidence": "one quote"}) == ["one quote"]
+    assert extract.all_found({"evidence": "Mentored two students."}, DOC)
+
+
+def test_publication_types_and_activity_categories_are_checked():
+    parsed = extract.parse_response(json.dumps({"items": [
+        item("x", "publication", "T", "Doe A. A study of scanners.", type="PAPER"),
+        item("y", "publication", "U", "Doe A. More on scanners.", type="blog"),
+        item("z", "activity", "V", "Reviewer for the Journal", category="service"),
+        item("w", "activity", "W", "Volunteers at a food bank", category="hobby")]}))
+    assert [i["fields"].get("type") or i["fields"].get("category") for i in parsed] == ["paper", None, "service", None]
+
+
+def test_the_review_is_organised_like_a_cv_with_one_group_per_job_and_one_per_publication_type():
+    data = stored(text=DOC, items=ITEMS)
+    sections = extract.review_groups(data)
+    assert [s for s, _ in sections] == ["Experience", "Papers and articles", "Conference abstracts and posters", "Talks and presentations",
+                                         "Skills", "Service and reviewing", "Extracurriculars and volunteering"]
+    exp = dict((s, g) for s, g in sections)["Experience"]
+    assert len(exp) == 1 and exp[0][1].startswith("Research assistant at Example Lab (2020 to 2022)") and len(exp[0][2]) == 3
+    papers = dict((s, g) for s, g in sections)["Papers and articles"]
+    assert len(papers) == 1 and len(papers[0][2]) == 2, "two papers are one group with one choice"
+
+
+def test_work_in_a_job_that_was_already_accepted_still_shows_under_that_job_and_loose_work_has_its_own_group():
+    data = stored(text=DOC, items=ITEMS[:3] + [item("w9", "work", "Something with no job", "Mentored two students.", position=None)])
+    pos = next(i for i in data["items"] if i["kind"] == "position")
+    extract.set_status(data, pos["id"], "accepted")
+    groups = dict(extract.review_groups(data))["Experience"]
+    assert [g[1] for g in groups][0].startswith("Research assistant") and len(groups[0][2]) == 2
+    assert groups[-1][1] == "Work and results not tied to a job"
+
+
+def test_the_facts_file_has_the_same_sections_and_marks_claims():
+    data = stored(text=DOC, items=ITEMS[:1] + [{**ITEMS[1], "label": "claim"}] + ITEMS[3:])
+    for it in data["items"]:
+        extract.set_status(data, it["id"], "accepted")
+    md = extract.render_md(data)
+    heads = [l for l in md.splitlines() if l.startswith("## ")]
+    assert heads == ["## Experience", "## Papers and articles", "## Conference abstracts and posters", "## Talks and presentations",
+                     "## Skills", "## Service and reviewing", "## Extracurriculars and volunteering"]
+    assert "(claim)" in md and "A study of scanners" in md and "Scanners in practice" in md
