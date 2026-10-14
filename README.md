@@ -131,7 +131,7 @@ Command line:
 .venv/bin/python ask.py --demo "question"              # offline placeholder answers
 ```
 
-### 📱 Use it from your phone (same Wi-Fi)
+### 📱 Beta: Use it from your phone (same Wi-Fi)
 
 By default the app only answers this computer. To open it from a phone or tablet on your home network:
 
