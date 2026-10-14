@@ -18,9 +18,9 @@ It runs on your own computer. Your documents stay in a folder here, and nothing 
 
 **It never invents your experience.** Everything about you has to come from your documents and is marked with the document it came from. General advice is marked `model knowledge`. Anything your documents do not cover is shown as a `GAP:` line for you to fill in. Figures that appear in a draft but in none of your documents are flagged for you to check. Models can still make mistakes, so read every draft before you use it.
 
-![The Profile page](docs/screenshot-profile.png)
+![The Profile page, with the review of what was found](docs/screenshot-profile.png)
 
-**A role's page:** sources on the left, the conversation in the middle, the evidence for each citation on the right. The tabs above switch between Research, Prep tools and Mock interview.
+**A role's page:** your sources and code projects on the left, with the **Add a code project** box, the conversation in the middle, and the evidence for each citation on the right. The tabs above switch between Research, Prep tools and Mock interview.
 
 ![A role's Research page](docs/screenshot-role.png)
 
@@ -37,7 +37,7 @@ These screenshots use made-up sample data and the offline demo mode.
 - Questions answered from your own documents, with every claim tagged by where it came from: `local` (your files, with page numbers), `code` (file and line range), `web` (a page the model searched) or `model knowledge`. Click a tag to read the exact passage.
 - Claude (through your Claude Code login or an API key), Gemini and Ollama. Auto picks one, you can force one, or compare Claude and Gemini side by side.
 - Optional web search, conversation memory, saved chats, source preview, and adding papers by upload or link.
-- Project code, read-only: Retrieve, Whole project and Explore modes, project maps, and a lasting "project knowledge" document. Code is only sent after you choose the provider each time.
+- Project code, read-only: add a project from the Sources panel (no settings file to edit), then ask with Retrieve, Whole project or Explore. A **deep read** builds a lasting "project knowledge" document, even for a large project: it is read in areas by several workers, by Claude or by an Ollama model you choose. Code is only sent after you choose the provider each time.
 - Infographics through Gemini's image model.
 
 **🎤 Interview preparation, per role**
@@ -53,11 +53,11 @@ Planned, not built yet: voice for the mock interview.
 
 ## 🧭 How it is organised
 
-1. **Profile** (the first tab): upload your CV (PDF, Word, Markdown or text), write a short "about you" and add publications. Press **Build my profile** and Claude writes a structured profile (experience, skills, publications, motivation) from them. Read it and correct anything wrong. It leaves out contact details. All roles share this profile.
+1. **Profile** (the first tab): upload your CV (PDF, Word, Markdown or text), write a short "about you" and add publications. Each time you save one, Claude reads it and lists what it found under **Review what was found**: positions, work, results, publications, credentials and goals, each with the exact words of your file it came from. You accept, edit or remove each item, and only accepted items go to the prep tools. Anything Claude gave that is not in your file is set aside. Missing dates and results are listed as gaps and never filled in. You can also press **Build my profile** for a written profile. All roles share your profile.
 2. **A tab per role** (**+ New role**): the title, the company, whether it is an **Industry** or **Academic** role, the pasted job description (saved as a Markdown file), your intent, and the CV for this role (or your main one).
 3. Inside a role, pick **Research**, **Prep tools** or **Mock interview**. Each role keeps its own chats, results and interviews. Prep tools and the mock interview use Claude through your Claude Code login (the `claude` command) and need a built profile or CV and a job description.
 
-Your private files live in `workspace/` (git-ignored): `workspace/profile/`, `workspace/roles/<role>/` and `workspace/prep/<role>/`. Prep results and mock interviews are saved there as Markdown, and are not searched by Research. Deleting a role deletes them.
+Your private files live in `workspace/` (git-ignored): `workspace/profile/` (your files, the review items in `facts.json`, and the accepted ones in `facts.md`), `workspace/roles/<role>/` and `workspace/prep/<role>/`. Prep results and mock interviews are saved there as Markdown, and are not searched by Research. Deleting a role deletes them.
 
 ## 🔎 What the research part does
 
@@ -97,7 +97,7 @@ You need at least one of these. Without any, tick **Use offline demo models** un
 | **Claude** with your login | Install Claude Code and log in. Nothing else to set up. |
 | **Claude** with an API key | Put `ANTHROPIC_API_KEY=...` in `.env` |
 | **Gemini** | Put `GEMINI_API_KEY=...` in `.env` |
-| **Ollama** (local) | Install Ollama and run `ollama pull <model>` |
+| **Ollama** (local) | Install Ollama and run `ollama pull <model>`. It can answer questions and read a code project in the deep read |
 
 To use keys, copy the template and fill it in yourself:
 
@@ -230,7 +230,7 @@ Web search is off by default, so nothing uses the API unless you switch it on. T
 
 ## 🔒 Privacy and safety
 
-> **A note on security.** Neither of us is a security expert or a software engineer, so we are not sure the tool has no leaks. The security checks were done by Claude, an AI model. It read the code and reported problems, and the problems it found were fixed. Claude did not attack the running app, and no human security expert has checked it. This is not a professional security audit. Please do not rely on it for highly sensitive data, and tell us if you find a problem.
+> **A note on security.** Neither of us is a security expert or a software engineer, so we are not sure the tool has no leaks. The security checks were done by Claude, an AI model. It read the code and reported problems, and the most serious ones it found were fixed. Some lower-priority ones are still open: the `claude` command reads your own Claude settings, the search index is stored with `pickle`, packages are not pinned, the passcode lockout is shared by everyone and has no minimum length, and Wi-Fi traffic is not encrypted. Claude did not attack the running app, and no human security expert has checked it. This is not a professional security audit. Please do not rely on it for highly sensitive data, and tell us if you find a problem.
 
 The points below are enforced in code and covered by automated tests, which were also written with Claude.
 
@@ -276,6 +276,10 @@ The points below are enforced in code and covered by automated tests, which were
 | `app.py`, `run_ui.sh` | Web interface (Streamlit) |
 | `prep_ui.py` | Profile, role and prep screens |
 | `candidate.py` | Profile, roles, uploads and what the search sees of them |
+| `extract.py` | Reads each saved file into organised, checkable items for review (masking, quote check, facts file) |
+| `projects.py` | Adding and removing code projects from the app |
+| `deepread.py` | The deep read: a large project read in areas by workers, then merged |
+| `safetext.py`, `webfetch.py` | Removing images from model text; fetching pasted links safely |
 | `prep.py`, `mock.py` | Prep tools and the mock interview: prompts, checks and saved results |
 | `ask.py` | Command line |
 | `engine.py` | Retrieval, routing, consent gate, providers, citations, and the code modes |
@@ -297,9 +301,9 @@ The points below are enforced in code and covered by automated tests, which were
 .venv/bin/python -m pytest tests
 ```
 
-The tests are offline and need no keys. They cover the profile, roles and uploads, the prep tools and mock interview (with a scripted stand-in for the model), the check for figures not in your documents, and also source selection and exclusions, page numbers and line ranges, citation tagging, routing, memory, the write limits, secret redaction, the consent gate (for every code mode), the project map and retrieval, whole-project trimming, the Explore copy and its checked citations, project knowledge, and the web app run headlessly.
+The tests are offline and need no keys. They cover the profile, roles and uploads, the prep tools and mock interview (with a scripted stand-in for the model), the check for figures not in your documents, and also source selection and exclusions, page numbers and line ranges, citation tagging, routing, memory, the write limits, secret redaction, the consent gate (for every code mode), the project map and retrieval, whole-project trimming, the Explore copy and its checked citations, project knowledge, the deep read (areas, resuming, updates, Claude or Ollama), adding code projects and the folder checks, the structured extraction and review, and the web app run headlessly.
 
-**Not covered by tests:** how good the real model's prep drafts and feedback are (the tests use a scripted stand-in, so they check what the model is given and what is kept, not what it writes), live calls to Claude, Gemini and Ollama, web search citation parsing, and Gemini image generation. For explore, the isolation was tried once live: a model was asked to read canary files placed in the parent folder, a sibling folder, the tool folder and the project root, and to run a shell command. It could do none of it. Building project knowledge was also tried once live on a small invented project. Neither check is part of the automatic tests, since they need a Claude login. The web app tests set the consent answer directly and do not click the dialog.
+**Not covered by tests:** how well a real Claude or Ollama model reads real documents and real code in the extraction and the deep read, the deep read window's provider choice inside the test harness, how good the real model's prep drafts and feedback are (the tests use a scripted stand-in, so they check what the model is given and what is kept, not what it writes), live calls to Claude, Gemini and Ollama, web search citation parsing, and Gemini image generation. For explore, the isolation was tried once live: a model was asked to read canary files placed in the parent folder, a sibling folder, the tool folder and the project root, and to run a shell command. It could do none of it. Building project knowledge was also tried once live on a small invented project. Neither check is part of the automatic tests, since they need a Claude login. The web app tests set the consent answer directly and do not click the dialog.
 
 ## ⚠️ Limits
 
