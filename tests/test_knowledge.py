@@ -85,14 +85,14 @@ def test_nothing_is_sent_before_consent_and_cancel_saves_nothing(tmp_path, provi
     assert all(not p.calls for p in providers.values())
 
 
-def test_only_claude_is_offered_to_write_it(tmp_path, providers):
+def test_only_claude_and_ollama_are_offered_to_read_it_never_gemini(tmp_path, providers):
     got = {}
 
     def look(req):
         got.update({o.key: o.available for o in req.options})
         return None
     build(tmp_path, providers).build_knowledge("proj", look)
-    assert got == {"claude": True, "gemini": False, "ollama": False}
+    assert got == {"claude": True, "gemini": False, "ollama": True}
 
 
 def test_build_saves_a_checked_document_and_sends_numbered_clean_files(tmp_path, providers):

@@ -160,12 +160,12 @@ def test_a_project_over_the_hard_limit_is_refused_before_anything_is_sent(tmp_pa
 
 
 # ---------------------------------------------------------------- through the engine
-def test_the_consent_request_names_the_areas_and_only_claude_may_answer(tmp_path, providers):
+def test_the_consent_request_names_the_areas_and_gemini_may_not_read_code(tmp_path, providers):
     eng = run(tmp_path, providers)
     eng.cfg["whole_project"]["max_tokens"]["claude"] = 10
     req, send = eng.knowledge_request("proj")
     assert "areas" in req.detail and f"{len(send)} files" in req.detail
-    assert [o.key for o in req.options if o.available] == ["claude"]
+    assert [o.key for o in req.options if o.available] == ["claude", "ollama"]
 
 
 def test_nothing_is_sent_when_the_user_cancels_a_deep_read(tmp_path, providers):
@@ -198,3 +198,78 @@ def test_deleting_the_knowledge_deletes_the_deep_read_notes_too(tmp_path, provid
     assert deepread.has_cache("proj")
     knowledge.delete("proj")
     assert not deepread.has_cache("proj") and knowledge.load("proj") is None
+
+
+# ---------------------------------------------------------------- reading with Ollama instead of Claude
+def test_ollama_complete_sends_the_prompt_and_context_size_and_returns_the_text(monkeypatch):
+    from providers import ollama
+    seen = {}
+
+    class R:
+        def raise_for_status(self): pass
+        def json(self): return {"message": {"content": "notes"}}
+
+    def post(url, json=None, timeout=None):
+        seen.update(url=url, body=json, timeout=timeout)
+        return R()
+    monkeypatch.setattr(ollama.requests, "post", post)
+    monkeypatch.setattr(ollama, "installed_models", lambda *a, **k: ["m1"])
+    p = ollama.OllamaProvider("m1")
+    out = p.complete("SYS", "USER", 30, num_ctx=8192)
+    b = seen["body"]
+    assert out.text == "notes" and out.model == "m1" and seen["url"].endswith("/api/chat") and seen["timeout"] == 30
+    assert b["stream"] is False and b["options"]["num_ctx"] == 8192 and [m["role"] for m in b["messages"]] == ["system", "user"]
+    assert b["messages"][0]["content"] == "SYS" and b["messages"][1]["content"] == "USER"
+
+
+def test_ollama_errors_become_a_provider_error(monkeypatch):
+    from providers import ollama
+    monkeypatch.setattr(ollama.requests, "post", lambda *a, **k: (_ for _ in ()).throw(OSError("refused")))
+    monkeypatch.setattr(ollama, "installed_models", lambda *a, **k: ["m1"])
+    with pytest.raises(ProviderError, match="Ollama error"):
+        ollama.OllamaProvider("m1").complete("s", "p")
+
+
+def test_a_deep_read_with_ollama_uses_only_ollama_and_always_reads_in_areas(tmp_path, providers):
+    eng = run(tmp_path, providers)                                    # the project is small: Claude would read it in one request
+    eng.cfg["deep_read"]["ollama"] = {"area_tokens": 6, "workers": 1, "num_ctx": 4096}
+    seen = []
+    ok, msg = eng.build_knowledge("proj", lambda req: (seen.append(req), ["ollama"])[1], provider="ollama")
+    assert ok and "Deep read" in msg
+    assert providers["ollama"].calls and not providers["claude"].calls and not providers["gemini"].calls
+    assert "Ollama" in seen[0].detail and "on this machine" in seen[0].detail
+    assert any(c["system"].startswith("You are one of several readers") for c in providers["ollama"].calls)
+
+
+def test_ollama_cloud_models_are_described_as_leaving_the_machine(tmp_path, providers):
+    eng = run(tmp_path, providers)
+    providers["ollama"].locality_value = "cloud"
+    req, _ = eng.knowledge_request("proj", provider="ollama")
+    assert "leaves this machine" in req.detail
+
+
+def test_approving_the_wrong_provider_sends_nothing(tmp_path, providers):
+    eng = run(tmp_path, providers)
+    ok, msg = eng.build_knowledge("proj", lambda req: ["claude"], provider="ollama")
+    assert not ok and "Cancelled" in msg and not providers["ollama"].calls and not providers["claude"].calls
+
+
+def test_an_unavailable_ollama_is_reported_and_nothing_is_asked(tmp_path, providers):
+    eng = run(tmp_path, providers)
+    providers["ollama"].available = lambda: (False, "Ollama is not running or has no models.")
+    ok, msg = eng.build_knowledge("proj", lambda req: pytest.fail("must not ask"), provider="ollama")
+    assert not ok and "Ollama is not available" in msg
+
+
+def test_the_final_request_is_shortened_when_the_model_holds_little_and_the_document_says_so(tmp_path, providers):
+    eng = run(tmp_path, providers)
+    fs = knowledge.current_files(eng.cfg, "proj")
+    areas, _ = deepread.plan_work(eng.cfg, "proj", fs)
+    notes = {a.key: {"FILES": "### x", "SUMMARY": "s" * 3000, "RESULTS": "r" * 3000, "DECISIONS": "d" * 3000, "CAVEATS": "c" * 3000, "GLOSSARY": "g" * 3000}
+             for a in areas}
+    full, cut = deepread.fit_merge("proj", areas, notes, 10_000_000)
+    assert not cut and "GLOSSARY:" in full
+    small, cut = deepread.fit_merge("proj", areas, notes, 1500)
+    assert cut and len(small) < len(full) and "GLOSSARY:" not in small
+    res = deepread.deep_read(providers["claude"], eng.cfg, "proj", fs, merge_tokens=20)
+    assert "written from shortened notes" in res.doc

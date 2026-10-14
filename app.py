@@ -513,22 +513,33 @@ def consent_dialog(req: ConsentRequest):
 
 @st.dialog("Project knowledge", width="large")
 def knowledge_dialog(name: str, update: bool):
-    req, send = eng.knowledge_request(name, update)
-    if req is None:
+    req0, _ = eng.knowledge_request(name, update)
+    if req0 is None:
         st.error("This project has no readable files.")
         return
-    st.info(req.detail)
-    st.caption("Claude reads the files and writes a document about the project. A large project is read in several parts, a few at a time. "
+    avail = [o for o in req0.options if o.available]
+    labels = {o.key: o.label for o in req0.options}
+    st.caption("A model reads the files and writes a document about the project. A large project is read in several parts, a few at a time. "
                "Later questions use the matching parts of it automatically. "
                "The document stays on this machine (knowledge/) and is never committed. Every file and line it cites is checked against the code.")
-    st.code("\n".join(req.files[:15]) + (f"\n... and {len(req.files) - 15} more" if len(req.files) > 15 else ""), language=None)
+    pick = st.radio("Which provider may read the code?", [o.key for o in avail], index=None, format_func=labels.get, key="kb_provider",
+                    help="Claude reads it through your Claude Code login and gives the best result. An Ollama model reads it on this machine "
+                         "(unless it is a :cloud model), slower and less reliably. Gemini cannot do this.")
+    if not avail:
+        st.error("Neither Claude (through your login) nor Ollama is available. Install and log in to Claude Code, or start Ollama with a model.")
+    if pick:
+        req, send = eng.knowledge_request(name, update, pick)
+        st.info(req.detail)
+        st.code("\n".join(req.files[:15]) + (f"\n... and {len(req.files) - 15} more" if len(req.files) > 15 else ""), language=None)
+    else:
+        st.caption("Choose a provider to see what would be sent. Nothing is sent until you press the button.")
     c1, c2 = st.columns(2)
-    if c1.button("Update with Claude" if update else "Build with Claude", type="primary", use_container_width=True):
+    if c1.button("Update" if update else "Build", type="primary", use_container_width=True, disabled=not pick):
         bar = st.progress(0.0, text="Starting...")
 
         def on_progress(done: int, total: int, label: str):
             bar.progress(min(done / max(total, 1), 1.0), text=f"Reading {label} ({done} of {total} steps)")
-        S.kb_msg = eng.build_knowledge(name, consent=lambda r: ["claude"], update=update, progress=on_progress)
+        S.kb_msg = eng.build_knowledge(name, consent=lambda r: [pick], update=update, progress=on_progress, provider=pick)
         st.rerun()
     if c2.button("Cancel, send nothing", use_container_width=True):
         st.rerun()

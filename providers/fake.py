@@ -42,7 +42,7 @@ class FakeProvider(Provider):
         return ProviderResult(text=f"I explored the project.{cite} Generally this is common practice [M]. A third point [{files[0]}:9999].",
                               model=f"{self.model} · explore")
 
-    def complete(self, system, prompt, timeout=None):
+    def complete(self, system, prompt, timeout=None, num_ctx=None):
         """Offline stand-in for writing the project knowledge document from the files in the prompt."""
         import re
         self.calls.append({"complete": True, "system": system, "prompt": prompt})

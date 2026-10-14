@@ -237,28 +237,54 @@ class Engine:
             notes.append(note)
         return chunks, notes
 
-    def _deep(self, name: str, files: dict, update: bool) -> bool:
-        """A project too big for one request, or one whose knowledge was built by a deep read, is read in areas."""
+    def _deep(self, name: str, files: dict, update: bool, provider: str = "claude") -> bool:
+        """A project too big for one request, one whose knowledge was built by a deep read, or any project read by a local model, is read in areas."""
         cap = projectctx.caps(self.cfg)["claude"]
-        return sum(f.tokens for f in files.values()) > cap or (update and deepread.has_cache(name))
+        return provider == "ollama" or sum(f.tokens for f in files.values()) > cap or (update and deepread.has_cache(name))
 
-    def knowledge_request(self, name: str, update: bool = False):
+    def _reader(self, provider: str):
+        """(object with complete(), how to read, why not). 'claude' is Claude Code through your login; 'ollama' is the Ollama model chosen in Settings."""
+        if provider == "ollama":
+            p = self.providers.get("ollama")
+            ok, why = p.available() if p else (False, "Ollama is not set up.")
+            if not ok:
+                return None, {}, why
+            o = {"num_ctx": 12288, "area_tokens": 6000, "workers": 1, **(deepread.settings_for(self.cfg).get("ollama") or {})}
+            runner = _Bound(p, int(o["num_ctx"]))
+            return runner, {"area_tokens": int(o["area_tokens"]), "workers": int(o["workers"]), "merge_tokens": int(int(o["num_ctx"]) * 0.5)}, ""
+        login = _claude_login(self.providers.get("claude"))
+        ok, why = login.available() if login else (False, "")
+        if not ok:
+            return None, {}, "Project knowledge needs Claude through your Claude Code login (the `claude` command). " + (why or "Set Claude access to Auto or Login.")
+        return login, {}, ""
+
+    def knowledge_request(self, name: str, update: bool = False, provider: str = "claude"):
         """What building (or updating) the knowledge for a project would send, as a consent request, plus the files."""
         files = knowledge.current_files(self.cfg, name)
         if not files:
             return None, []
-        if self._deep(name, files, update):
-            areas, todo = deepread.plan_work(self.cfg, name, files)
+        options = options_for(self.providers)
+        for o in options:
+            if o.key not in ("claude", "ollama"):
+                o.available, o.note = False, "project knowledge is read by Claude Code or an Ollama model"
+        if self._deep(name, files, update, provider):
+            _r, ov, _why = self._reader(provider)
+            areas, todo = deepread.plan_work(self.cfg, name, files, ov.get("area_tokens"))
             send = [f for a in todo for f in a.files]
             tokens = sum(f.tokens for f in send)
-            options = options_for(self.providers)
-            for o in options:
-                if o.key != "claude":
-                    o.available, o.note = False, "a deep read is done by Claude Code"
-            workers = deepread.settings_for(self.cfg)["workers"]
-            detail = (f"Deep read of {name}: Claude, through your Claude Code login, will read {len(todo)} of {len(areas)} areas "
-                      f"({len(send)} files, about {tokens:,} tokens), up to {workers} at a time, then write a final overview. That is {len(todo) + 1} requests. "
-                      "It uses a lot of your Claude plan's limit and can take a long time. Finished areas are kept on this machine, so a stopped run continues.")
+            workers = ov.get("workers") or deepread.settings_for(self.cfg)["workers"]
+            if provider == "ollama":
+                p = self.providers.get("ollama")
+                where = ("on this machine, so the code does not leave it" if getattr(p, "locality", "cloud") == "local"
+                         else "on Ollama's servers (a :cloud model), so the code leaves this machine")
+                who = f"Ollama ({getattr(p, 'model', '')}), {where}"
+                note = "A local model is slower and less reliable than Claude on a large project. Check the result."
+            else:
+                who = "Claude, through your Claude Code login"
+                note = "It uses a lot of your Claude plan's limit and can take a long time."
+            detail = (f"Deep read of {name}: {who}, will read {len(todo)} of {len(areas)} areas ({len(send)} files, about {tokens:,} tokens), "
+                      f"{workers} at a time, then write a final overview. That is {len(todo) + 1} requests. {note} "
+                      "Finished areas are kept on this machine, so a stopped run continues.")
             return ConsentRequest([f"{name}/{f.rel}" for f in send], options, scope="knowledge", detail=detail), send
         if update:
             st = knowledge.status(self.cfg, name)
@@ -266,20 +292,17 @@ class Engine:
         else:
             send = list(files.values())
         tokens = sum(f.tokens for f in send)
-        options = options_for(self.providers)
-        for o in options:
-            if o.key != "claude":
-                o.available, o.note = False, "project knowledge is written by Claude Code"
         detail = (f"{'Update' if update else 'Build'} project knowledge for {name}: Claude, through your Claude Code login, "
                   f"will read {len(send)} files (about {tokens:,} tokens) and write a document about them, which is kept on this machine.")
         return ConsentRequest([f"{name}/{f.rel}" for f in send], options, scope="knowledge", detail=detail), send
 
-    def build_knowledge(self, name: str, consent: ConsentFn = cli_consent, update: bool = False, progress=None) -> tuple[bool, str]:
-        """Claude reads the whole project once and writes the knowledge document. Returns (done, message)."""
-        login = _claude_login(self.providers.get("claude"))
-        ok, why = login.available() if login else (False, "")
-        if not ok:
-            return False, "Project knowledge needs Claude through your Claude Code login (the `claude` command). " + (why or "Set Claude access to Auto or Login.")
+    def build_knowledge(self, name: str, consent: ConsentFn = cli_consent, update: bool = False, progress=None, provider: str = "claude") -> tuple[bool, str]:
+        """A model reads the whole project and writes the knowledge document. Returns (done, message).
+
+        provider 'claude' reads it in one request, or in areas when it is too big; 'ollama' always reads in small areas."""
+        login, ov, why = self._reader(provider)
+        if login is None:
+            return False, why if provider == "claude" else f"Ollama is not available. {why}"
         if name not in projectctx.project_names(self.cfg):
             return False, f"{name} is not a project in the config."
         existing = knowledge.load(name) if update else None
@@ -287,11 +310,11 @@ class Engine:
         files_now = knowledge.current_files(self.cfg, name)
         if not files_now:
             return False, f"{name} has no readable files."
-        req, send = self.knowledge_request(name, update)
+        req, send = self.knowledge_request(name, update, provider)
         if update and not send and not knowledge.status(self.cfg, name).removed:
             return False, "Nothing has changed since the knowledge was built."
-        if self._deep(name, files_now, update):
-            return self._deep_build(name, login, files_now, req, consent, progress)
+        if self._deep(name, files_now, update, provider):
+            return self._deep_build(name, login, files_now, req, consent, progress, provider, ov)
         tokens = sum(f.tokens for f in send) + (knowledge.estimate_tokens(len(existing[0])) if update else 0)
         cap = projectctx.caps(self.cfg)["claude"]
         if tokens > cap:
@@ -316,20 +339,22 @@ class Engine:
         return True, (f"{'Updated' if update else 'Built'} project knowledge for {name}: {len(files_now)} files, "
                       f"{knowledge.estimate_tokens(len(doc)):,} tokens. {n_ok} citations checked against the code, {n_bad} unverified.")
 
-    def _deep_build(self, name, login, files_now, req, consent, progress) -> tuple[bool, str]:
-        """Read the project in areas with several Claude workers, then write the document. Finished areas are kept if it stops."""
+    def _deep_build(self, name, reader, files_now, req, consent, progress, provider="claude", ov=None) -> tuple[bool, str]:
+        """Read the project in areas with workers, then write the document. Finished areas are kept if it stops."""
         approved = consent(req)
-        if not approved or "claude" not in approved:
+        if not approved or provider not in approved:
             return False, "Cancelled. Nothing was sent to any model."
+        ov = ov or {}
         try:
-            res = deepread.deep_read(login, self.cfg, name, files_now, progress)
+            res = deepread.deep_read(reader, self.cfg, name, files_now, progress, area_tokens=ov.get("area_tokens"),
+                                     workers=ov.get("workers"), merge_tokens=ov.get("merge_tokens"))
         except (ProviderError, ValueError) as e:
             return False, f"The deep read of {name} stopped: {e} Areas that were finished are kept, so running it again continues."
         doc, n_ok, n_bad = knowledge.verify_citations(res.doc, files_now)
         if not knowledge.looks_like_a_document(doc):
             return False, "The deep read did not produce a usable document. Nothing was saved. Try again."
         knowledge.save(name, doc, knowledge.record(name, doc, files_now, res.model, n_ok, n_bad))
-        return True, (f"Deep read of {name}: {len(files_now)} files in {res.areas} areas ({res.reused} reused from before), {res.calls} Claude requests, "
+        return True, (f"Deep read of {name}: {len(files_now)} files in {res.areas} areas ({res.reused} reused from before), {res.calls} requests to {res.model or provider}, "
                       f"{knowledge.estimate_tokens(len(doc)):,} tokens. {n_ok} citations checked against the code, {n_bad} unverified.")
 
     # ------------------------------------------------------------ explore
@@ -424,6 +449,15 @@ class Engine:
             notes=res.notes,
         ))
         session.save()
+
+
+class _Bound:
+    """An Ollama provider with its context size fixed, so deep read can call complete(system, prompt, timeout) like it does for Claude."""
+    def __init__(self, provider, num_ctx: int):
+        self.provider, self.num_ctx = provider, num_ctx
+
+    def complete(self, system, prompt, timeout=None):
+        return self.provider.complete(system, prompt, timeout, num_ctx=self.num_ctx)
 
 
 def _claude_login(p):

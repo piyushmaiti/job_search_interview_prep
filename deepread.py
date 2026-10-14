@@ -25,7 +25,7 @@ import settings
 from projectctx import ProjectFile, estimate_tokens
 from providers.base import ProviderError
 
-DEFAULTS = {"area_tokens": 60000, "workers": 3, "timeout_seconds": 1200, "max_tokens": 2_000_000}
+DEFAULTS = {"area_tokens": 60000, "workers": 3, "timeout_seconds": 1200, "max_tokens": 2_000_000, "merge_tokens": 120000}
 MARKERS = ("FILES", "SUMMARY", "RESULTS", "DECISIONS", "CAVEATS", "GLOSSARY")
 MARKER_RE = re.compile(r"^=== (FILES|SUMMARY|RESULTS|DECISIONS|CAVEATS|GLOSSARY) ===\s*$", re.M)
 
@@ -162,9 +162,9 @@ def delete_cache(name: str) -> None:
         pass
 
 
-def plan_work(cfg: dict, name: str, files: dict[str, ProjectFile]) -> tuple[list[Area], list[Area]]:
+def plan_work(cfg: dict, name: str, files: dict[str, ProjectFile], area_tokens: int | None = None) -> tuple[list[Area], list[Area]]:
     """(all areas, the areas that still have to be read). An area whose files have not changed since it was read is reused."""
-    areas = plan_areas(files, int(settings_for(cfg)["area_tokens"]))
+    areas = plan_areas(files, int(area_tokens or settings_for(cfg)["area_tokens"]))
     cache = load_cache(name)
     return areas, [a for a in areas if a.key not in cache]
 
@@ -209,13 +209,30 @@ def read_area(login, name: str, area: Area, timeout: int) -> tuple[dict[str, str
 
 
 # ---------------------------------------------------------------- 4. merge and 5. build
-def merge_prompt(name: str, areas: list[Area], notes: dict[str, dict]) -> str:
+def merge_prompt(name: str, areas: list[Area], notes: dict[str, dict], drop: tuple = (), summary_chars: int | None = None) -> str:
     blocks = []
     for a in areas:
         n = notes[a.key]
-        blocks.append(f"<area label=\"{a.label}\">\nFILES: {', '.join(f.rel for f in a.files)}\n\nSUMMARY:\n{n['SUMMARY']}\n\nRESULTS:\n{n['RESULTS']}\n\n"
-                      f"DECISIONS:\n{n['DECISIONS']}\n\nCAVEATS:\n{n['CAVEATS']}\n\nGLOSSARY:\n{n['GLOSSARY']}\n</area>")
+        parts = [f"FILES: {', '.join(f.rel for f in a.files)}"]
+        for m in ("SUMMARY", "RESULTS", "DECISIONS", "CAVEATS", "GLOSSARY"):
+            if m not in drop:
+                body = n[m] if not (summary_chars and m == "SUMMARY") else n[m][:summary_chars]
+                parts.append(f"{m}:\n{body}")
+        blocks.append(f"<area label=\"{a.label}\">\n" + "\n\n".join(parts) + "\n</area>")
     return f"PROJECT NAME: {name}\n\nNOTES FROM THE READERS:\n" + "\n\n".join(blocks) + "\n\nWrite the final sections now."
+
+
+def fit_merge(name: str, areas: list[Area], notes: dict[str, dict], budget_tokens: int) -> tuple[str, bool]:
+    """The final request, shortened step by step when the notes are more than the model can hold: first the glossaries, decisions,
+    caveats and results are left out, then each summary is cut. Returns (prompt, whether it was shortened)."""
+    drop: tuple = ()
+    for step in ((), ("GLOSSARY",), ("GLOSSARY", "DECISIONS"), ("GLOSSARY", "DECISIONS", "CAVEATS"), ("GLOSSARY", "DECISIONS", "CAVEATS", "RESULTS")):
+        drop = step
+        p = merge_prompt(name, areas, notes, drop)
+        if estimate_tokens(len(p)) <= budget_tokens:
+            return p, bool(drop)
+    chars = max(200, (budget_tokens * 4) // max(len(areas), 1) - 400)
+    return merge_prompt(name, areas, notes, drop, chars), True
 
 
 def split_sections(text: str) -> dict[str, str]:
@@ -251,7 +268,8 @@ class Result:
     calls: int
 
 
-def deep_read(login, cfg: dict, name: str, files: dict[str, ProjectFile], progress=None) -> Result:
+def deep_read(login, cfg: dict, name: str, files: dict[str, ProjectFile], progress=None, area_tokens: int | None = None,
+              workers: int | None = None, merge_tokens: int | None = None) -> Result:
     """Read the whole project in areas and return the assembled document. `progress(done, total, label)` is called as each area finishes.
 
     Raises ProviderError or ValueError with a message for the user. Finished areas are saved first, so running it again continues."""
@@ -259,14 +277,14 @@ def deep_read(login, cfg: dict, name: str, files: dict[str, ProjectFile], progre
     total_tokens = sum(f.tokens for f in files.values())
     if total_tokens > int(s["max_tokens"]):
         raise ValueError(f"{name} is about {total_tokens:,} tokens, over the deep-read limit of {int(s['max_tokens']):,}. Raise deep_read.max_tokens or add a smaller folder.")
-    areas, todo = plan_work(cfg, name, files)
+    areas, todo = plan_work(cfg, name, files, area_tokens)
     cache = load_cache(name)
     live = {a.key: cache[a.key] for a in areas if a.key in cache}       # areas of files that no longer exist are dropped
     model, done, calls = "", 0, 0
     if progress:
         progress(0, len(todo) + 1, "starting")
     if todo:
-        with ThreadPoolExecutor(max_workers=max(1, int(s["workers"]))) as pool:
+        with ThreadPoolExecutor(max_workers=max(1, int(workers or s["workers"]))) as pool:
             futures = {pool.submit(read_area, login, name, a, int(s["timeout_seconds"])): a for a in todo}
             try:
                 for fut in as_completed(futures):
@@ -283,11 +301,15 @@ def deep_read(login, cfg: dict, name: str, files: dict[str, ProjectFile], progre
                     f.cancel()
                 raise
     notes = {k: v["notes"] for k, v in live.items()}
-    res = _complete(login, MERGE_SYSTEM, merge_prompt(name, areas, notes), int(s["timeout_seconds"]))
+    prompt, condensed = fit_merge(name, areas, notes, int(merge_tokens or s["merge_tokens"]))
+    res = _complete(login, MERGE_SYSTEM, prompt, int(s["timeout_seconds"]))
     calls += 1
     merged = split_sections(res.text or "")
     if "Overview" not in merged:
         raise ValueError("the final reader did not return an overview")
+    if condensed:
+        key = "Caveats, limitations and open questions"
+        merged[key] = (merged.get(key) or "") + "\n\nNote: the final overview was written from shortened notes, because the reading model can hold only a limited amount of text. The Files section has the full detail."
     if progress:
         progress(len(todo) + 1, len(todo) + 1, "final overview")
     save_cache(name, live)

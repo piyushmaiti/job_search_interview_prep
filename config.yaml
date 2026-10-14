@@ -55,6 +55,10 @@ deep_read:
   workers: 3                  # areas read at the same time (more is faster but uses your Claude plan's limit faster)
   timeout_seconds: 1200       # per request
   max_tokens: 2000000         # refuse a project bigger than this
+  ollama:                     # when an Ollama model reads the project instead of Claude (small models hold less, and one machine runs one model well)
+    num_ctx: 12288            # how much text the model holds per request; must fit an area, its instructions and its notes
+    area_tokens: 6000
+    workers: 1
 
 # Explore mode: Claude reads a sanitized read-only copy of the ticked project through your Claude Code login.
 explore:

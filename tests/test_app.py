@@ -365,7 +365,7 @@ def test_a_code_project_can_be_added_from_the_sources_panel_and_appears_ticked_o
     assert not at.exception, at.exception
     assert "new_code" in [p["name"] for p in yaml.safe_load(settings.LOCAL_CONFIG.read_text())["projects"]]
     assert at.checkbox(key="src-new_code").value is False, "added projects start unticked"
-    assert any(b.label == "Build with Claude" for b in at.button), "the deep read opens next and waits for the user's choice"
+    assert any(b.label == "Build" and b.disabled for b in at.button), "the deep read opens next and waits for the user's choice of provider"
     assert not extract_free_knowledge("new_code"), "nothing is read or sent until the user presses the button"
 
 
@@ -386,3 +386,19 @@ def test_adding_a_project_shows_an_error_for_a_bad_folder_and_is_hidden_in_lan_m
 def extract_free_knowledge(name):
     import knowledge
     return knowledge.load(name)
+
+
+def test_the_deep_read_dialog_offers_claude_and_ollama_with_no_default_and_nothing_is_read_yet(tmp_path):
+    import deepread
+    import knowledge
+    d = tmp_path / "ollama_code"
+    d.mkdir()
+    (d / "tool.py").write_text("def hello():\n    return 'hi'\n")
+    at = run_app()
+    at.text_input(key="proj_path_0").set_value(str(d)).run()
+    next(b for b in at.button if b.label == "Add and re-index").click().run()
+    assert not at.exception, at.exception
+    radio = at.radio(key="kb_provider")
+    assert radio.value is None and sorted(o.split(" ")[0] for o in radio.options) == ["claude", "ollama"]
+    assert any(b.label == "Build" and b.disabled for b in at.button), "Build stays off until a provider is chosen"
+    assert knowledge.load("ollama_code") is None and not deepread.has_cache("ollama_code")

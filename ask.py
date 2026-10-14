@@ -80,6 +80,7 @@ def main(argv=None) -> int:
     ap.add_argument("--sources", help="comma-separated source names from config.yaml, for example: Library,my_project")
     ap.add_argument("--code-mode", choices=["retrieve", "whole", "explore"], default="retrieve",
                     help="retrieve = best-matching pieces (default); whole = every readable file of the selected projects in one request; explore = Claude opens files itself in a read-only copy (Claude login only)")
+    ap.add_argument("--knowledge-provider", choices=["claude", "ollama"], default="claude", help="who reads the project for --build-knowledge or --update-knowledge (default claude)")
     ap.add_argument("--build-knowledge", metavar="PROJECT", help="Claude reads the whole project once and writes a lasting knowledge document (asks first)")
     ap.add_argument("--update-knowledge", metavar="PROJECT", help="update the knowledge document from the files that changed (asks first)")
     ap.add_argument("--knowledge-status", action="store_true", help="show which projects have knowledge built, and whether it is current")
@@ -99,7 +100,7 @@ def main(argv=None) -> int:
     eng = Engine(cfg, index, providers)
 
     if a.build_knowledge or a.update_knowledge:
-        done, msg = eng.build_knowledge(a.build_knowledge or a.update_knowledge, consent=cli_consent, update=bool(a.update_knowledge),
+        done, msg = eng.build_knowledge(a.build_knowledge or a.update_knowledge, consent=cli_consent, update=bool(a.update_knowledge), provider=a.knowledge_provider,
                                        progress=lambda d, t, label: print(f"  reading {label} ({d} of {t})"))
         print(msg)
         return 0 if done else 1

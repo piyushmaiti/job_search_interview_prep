@@ -62,6 +62,17 @@ class OllamaProvider(Provider):
             return f"ollama ({self.model}, runs on Ollama's cloud, NOT on this machine)"
         return f"ollama ({self.model}, local, stays on this machine)"
 
+    def complete(self, system: str, prompt: str, timeout: int | None = None, num_ctx: int | None = None) -> ProviderResult:
+        """One request with its own system prompt and nothing else (used by the deep read). num_ctx sets how much text the model can hold."""
+        body = {"model": self.model, "messages": [{"role": "system", "content": system}, {"role": "user", "content": prompt}], "stream": False,
+                "options": {"temperature": 0.1, **({"num_ctx": int(num_ctx)} if num_ctx else {})}}
+        try:
+            r = requests.post(f"{HOST}/api/chat", json=body, timeout=int(timeout or 1200))
+            r.raise_for_status()
+            return ProviderResult(text=r.json()["message"]["content"], model=self.model)
+        except Exception as e:
+            raise ProviderError(f"Ollama error: {e}") from e
+
     def generate(self, question, chunks, history, web):
         msgs = [{"role": "system", "content": system_prompt(self.opts.get("role", ""))}]
         for q, a in history:
