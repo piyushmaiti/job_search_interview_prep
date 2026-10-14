@@ -4,6 +4,7 @@ from __future__ import annotations
 import streamlit as st
 
 import candidate
+import extract
 import safetext
 
 S = st.session_state
@@ -85,6 +86,32 @@ def view_bar() -> str:
     return picked
 
 
+# ---------------------------------------------------------------- reading what was uploaded
+def _extract_one(complete, source: str, text: str) -> str:
+    """Read one document with Claude and store what it finds for review. Returns a sentence for the user."""
+    with st.spinner(f"Reading {source} (about a minute)..."):
+        ok, msg = extract.extract_source(complete, source, text)
+    return msg
+
+
+def _all_sources() -> list[tuple[str, str]]:
+    """Every profile document that can be read, as (name for the review, its text)."""
+    out = []
+    cv = candidate.cv_path()
+    if cv:
+        out.append(("CV", candidate.read_text(cv)))
+    about = candidate.read_about()
+    if about.strip():
+        out.append(("About me", about))
+    d = candidate.profile_dir() / "publications"
+    for name in candidate.list_publications():
+        try:
+            out.append((f"Publication: {name}", candidate.read_text(d / name, 6000)))
+        except Exception:
+            pass
+    return out
+
+
 # ---------------------------------------------------------------- profile
 def profile_page(complete, rebuild_index) -> None:
     with st.container(key="page_profile"):
@@ -95,7 +122,8 @@ def _profile_page(complete, rebuild_index) -> None:
     """Upload once; the profile is extracted from it and shared by every role."""
     st.markdown("## Your profile")
     st.caption("One profile for every role. Add your CV, say something about yourself, and add your publications if you have any. "
-               "Everything stays in the workspace folder on this computer.")
+               "Your files stay in the workspace folder on this computer. Each time you save one, Claude (through your Claude Code login) reads it "
+               "and lists what it found for you to review below. Names of other people, emails and phone numbers are hidden first, on a best-effort basis.")
     flash()
     have_cv = candidate.has_profile_cv()
 
@@ -108,9 +136,10 @@ def _profile_page(complete, rebuild_index) -> None:
     if st.button("Replace CV" if cv else "Save CV", key="cv-save", disabled=f is None):
         try:
             candidate.save_cv(f.name, f.getvalue())
+            note = _extract_one(complete, "CV", candidate.read_text(candidate.cv_path()))
             rebuild_index()
             _next_round("cv")
-            S.flash = (True, "CV saved.")
+            S.flash = (True, "CV saved. " + note)
         except Exception as e:
             S.flash = (False, f"Could not save the CV: {e}")
         st.rerun()
@@ -137,10 +166,17 @@ def _profile_page(complete, rebuild_index) -> None:
                 else:
                     text = data.decode("utf-8", errors="replace")
             candidate.save_about(text)
+            if text.strip():
+                note = _extract_one(complete, "About me", text)
+            else:
+                data = extract.load()
+                extract.remove_source(data, "About me")
+                extract.save(data)
+                note = "The items found in it were removed."
             rebuild_index()
             _next_round("about")
             _next_round("aboutf")
-            S.flash = (True, "Saved.")
+            S.flash = (True, "Saved. " + note)
         except Exception as e:
             S.flash = (False, f"Could not save: {e}")
         st.rerun()
@@ -152,23 +188,29 @@ def _profile_page(complete, rebuild_index) -> None:
         c1.markdown(name)
         if c2.button("", key=f"pub-del-{name}", icon=":material/delete:", type="tertiary", help="Remove this publication"):
             candidate.delete_publication(name)
+            data = extract.load()
+            extract.remove_source(data, f"Publication: {name}")
+            extract.save(data)
             rebuild_index()
             st.rerun()
     pubs = st.file_uploader("Add publications", type=["pdf", "md", "txt"], accept_multiple_files=True, key=f"pub_up_{_round('pub')}",
                             label_visibility="collapsed")
     if st.button("Add publications", key="pub-save", disabled=not pubs):
-        bad = []
+        bad, notes = [], []
         for p in pubs:
             try:
-                candidate.save_publication(p.name, p.getvalue())
+                path = candidate.save_publication(p.name, p.getvalue())
+                notes.append(_extract_one(complete, f"Publication: {path.name}", candidate.read_text(path, 6000)))
             except Exception as e:
                 bad.append(f"{p.name}: {e}")
         rebuild_index()
         _next_round("pub")
-        S.flash = (not bad, "Added." if not bad else "Some files were not added: " + "; ".join(bad))
+        S.flash = (not bad, ("Added. " + " ".join(notes)) if not bad else "Some files were not added: " + "; ".join(bad))
         st.rerun()
 
-    st.markdown("### 4. Build your profile")
+    _review_section(complete, rebuild_index)
+
+    st.markdown("### 5. Build your profile")
     status = candidate.profile_status()
     st.caption("Claude reads your CV, your text and the start of each publication and writes a structured profile: experience, skills, "
                "publications, motivation. This sends that text to Claude through your Claude login. Contact details are left out.")
@@ -197,6 +239,96 @@ def _profile_page(complete, rebuild_index) -> None:
             S.flash = (True, "Profile saved.")
             st.rerun()
         st.caption("Next: add a role with + New role at the top.")
+
+
+def _item_title(it: dict) -> str:
+    tag = extract.KIND_NAMES[it["kind"]] + (f" ({it['label']})" if it["label"] != "fact" else "")
+    return f"**{tag}** from {it['source']}" + (" . edited by you" if it.get("edited") else "") + (" . source changed, check" if it.get("changed") else "")
+
+
+def _review_section(complete, rebuild_index) -> None:
+    """What Claude found in your documents. Only what you accept is used by the prep tools."""
+    st.markdown("### 4. Review what was found")
+    st.caption("Each item shows the exact words of your file it came from. Accept it, correct it, or remove it. "
+               "Only accepted items go to the prep tools. Anything Claude wrote that is not in your file is set aside, never shown as a fact.")
+    data = extract.load()
+    c = extract.counts(data)
+    docs = _all_sources()
+    if not data["items"]:
+        st.caption("Nothing to review yet. Save your CV, your text or a publication above." if not docs else
+                   "Nothing was found yet. Press the button to read your documents.")
+    cols = st.columns(2)
+    if cols[0].button("Read my documents again", key="extract-all", disabled=not docs or complete is None, use_container_width=True,
+                      help="Reads every document above with Claude again. Items you accepted stay."):
+        notes = [_extract_one(complete, name, text) for name, text in docs]
+        rebuild_index()
+        S.flash = (True, " ".join(notes))
+        st.rerun()
+    if complete is None:
+        st.caption("Claude through your Claude Code login is not available, so nothing can be read right now.")
+    pend = [it for it in data["items"] if it["status"] == "pending"]
+    if pend and cols[1].button(f"Accept all {len(pend)} pending", key="accept-all", use_container_width=True):
+        for it in pend:
+            extract.set_status(data, it["id"], "accepted")
+        extract.save(data)
+        rebuild_index()
+        st.rerun()
+    if data["items"]:
+        st.caption(f"{c['accepted']} accepted, {c['pending']} waiting for you, {c['unmatched']} set aside.")
+
+    notes = extract.conflicts(data)
+    gaps = extract.gaps(data)
+    if notes or gaps:
+        with st.expander(f"Conflicts and gaps ({len(notes) + len(gaps)})"):
+            for x in notes:
+                st.markdown(f"- Conflict: {x}")
+            for x in gaps:
+                st.markdown(f"- {x}")
+            st.caption("The tool never fills these in. Add the missing detail to your CV or text and read the document again.")
+
+    if pend:
+        with st.form("review-form"):
+            for it in pend:
+                st.markdown(_item_title(it))
+                st.text_area("Item", value=it["text"], key=f"rv_text_{it['id']}", label_visibility="collapsed", height=70)
+                st.caption("From your file: \u201c" + it["evidence"] + "\u201d")
+                st.radio("Decision", ["Decide later", "Accept", "Remove"], key=f"rv_dec_{it['id']}", horizontal=True, label_visibility="collapsed")
+            if st.form_submit_button("Apply decisions", type="primary"):
+                for it in pend:
+                    dec = S.get(f"rv_dec_{it['id']}", "Decide later")
+                    text = S.get(f"rv_text_{it['id']}", it["text"])
+                    if dec == "Accept":
+                        extract.set_status(data, it["id"], "accepted", text)
+                    elif dec == "Remove":
+                        extract.set_status(data, it["id"], "removed")
+                    elif text != it["text"]:
+                        extract.set_status(data, it["id"], "pending", text)
+                extract.save(data)
+                rebuild_index()
+                st.rerun()
+
+    acc = [it for it in data["items"] if it["status"] == "accepted"]
+    if acc:
+        with st.expander(f"Accepted ({len(acc)})"):
+            for it in acc:
+                r1, r2 = st.columns([8, 1], vertical_alignment="center")
+                r1.markdown(f"{_item_title(it)}  \n{it['text']}")
+                if r2.button("", key=f"rm_{it['id']}", icon=":material/delete:", type="tertiary", help="Remove this item"):
+                    extract.set_status(data, it["id"], "removed")
+                    extract.save(data)
+                    rebuild_index()
+                    st.rerun()
+    bad = [it for it in data["items"] if it["status"] == "unmatched"]
+    if bad:
+        with st.expander(f"Set aside: not found in your file ({len(bad)})"):
+            st.caption("Claude gave these, but the words it quoted are not in your file, so they cannot be accepted.")
+            for it in bad:
+                st.markdown(f"{extract.KIND_NAMES[it['kind']]} from {it['source']}: {it['text']}")
+                st.caption("Quoted: \u201c" + it["evidence"] + "\u201d")
+            if st.button("Dismiss these", key="dismiss-bad"):
+                extract.dismiss_unmatched(data)
+                extract.save(data)
+                st.rerun()
 
 
 # ---------------------------------------------------------------- roles
