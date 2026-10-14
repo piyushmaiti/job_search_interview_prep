@@ -752,8 +752,7 @@ with left:
                                "Each question that would send code asks which provider may receive it.")
                     pj_path = st.text_input("Folder", placeholder="~/code/my_project", key=f"proj_path_{S.proj_round}")
                     pj_name = st.text_input("Name (optional)", placeholder="defaults to the folder name", key=f"proj_name_{S.proj_round}")
-                    b1, b2 = st.columns(2)
-                    if b1.button("Check folder", key="proj-check", use_container_width=True, disabled=not pj_path.strip()):
+                    if st.button("Check folder", key="proj-check", use_container_width=True, disabled=not pj_path.strip()):
                         try:
                             pv = projects.preview(projects.check_path(pj_path), cfg)
                             st.info(f"{pv.readable} files would be read ({pv.size_bytes / 1e6:.1f} MB). {pv.skipped} other files are left out "
@@ -761,7 +760,7 @@ with left:
                                     "No readable code files were found."))
                         except ValueError as e:
                             st.error(str(e))
-                    if b2.button("Add and re-index", key="proj-add", use_container_width=True, disabled=not pj_path.strip(), type="primary"):
+                    if st.button("Add and re-index", key="proj-add", use_container_width=True, disabled=not pj_path.strip()):
                         try:
                             name = projects.add(pj_path, pj_name)
                             with st.spinner("Re-indexing (this can take a few minutes for a large project)..."):
