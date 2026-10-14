@@ -439,3 +439,25 @@ def test_accepting_items_in_the_review_form_makes_them_available_to_the_prep_too
     assert not at.exception, at.exception
     assert all(i["status"] == "accepted" for i in extract.load()["items"] if i["verified"])
     assert "Reviewed facts" in candidate.read_facts()
+
+
+def test_review_sections_can_be_decided_as_a_group_and_an_item_overrides_its_group():
+    import extract
+    from tests.test_extract import DOC, ITEMS, stored
+    candidate.save_cv("cv.md", DOC.encode())
+    stored(text=DOC, items=ITEMS)
+    at = run_app(view="__profile__")
+    assert not at.exception, at.exception
+    labels = [e.label for e in at.expander]
+    assert any(l.startswith("Research assistant at Example Lab (2020 to 2022), 3 items") for l in labels)
+    assert "Papers and articles (2)" in labels and "Talks and presentations (1)" in labels
+    at.radio(key="rv_grp_sec:Papers and articles").set_value("Accept all")
+    b1 = next(i for i in extract.load()["items"] if i["text"] == "More on scanners")
+    at.radio(key=f"rv_dec_{b1['id']}").set_value("Remove")
+    at.radio(key="rv_grp_sec:Skills").set_value("Remove all")
+    next(b for b in at.button if b.label == "Apply decisions").click().run()
+    assert not at.exception, at.exception
+    status = {i["text"]: i["status"] for i in extract.load()["items"]}
+    assert status["A study of scanners"] == "accepted" and "More on scanners" not in status
+    assert "Programming: Python, MATLAB" not in status
+    assert status["Scanners in practice"] == "pending", "a group left on 'Decide later' stays waiting"
