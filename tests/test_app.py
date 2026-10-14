@@ -346,3 +346,40 @@ def test_mock_interview_goes_from_question_to_feedback():
     assert not at.exception, at.exception
     assert not at.error, [e.value for e in at.error]
     assert any("A stronger version" in m.value for m in at.markdown)
+
+
+# ---------------------------------------------------------------- structured extraction on the Profile page
+NURSE_CV = (b"# Sam Lee\n\nStaff nurse on the cardiac ward at Example Hospital, 2019 to 2023.\n"
+            b"Trained twelve new nurses on the ward handover process.\nI want to move into nurse education.\n")
+
+
+def test_saving_a_cv_reads_it_and_lists_items_for_review_without_using_them_yet():
+    import extract
+    at = run_app(view="__profile__")
+    assert not at.exception, at.exception
+    at.file_uploader(key="cv_up_0").set_value(("cv.md", NURSE_CV, "text/markdown")).run()
+    next(b for b in at.button if b.label in ("Replace CV", "Save CV")).click().run()
+    assert not at.exception, at.exception
+    data = extract.load()
+    pending = [i for i in data["items"] if i["status"] == "pending"]
+    assert pending and all(i["evidence"] for i in pending)
+    assert any(i["status"] == "unmatched" for i in data["items"]), "the invented item was set aside"
+    assert candidate.read_facts() == "", "nothing is used before it is accepted"
+    assert any("Review what was found" in m.value for m in at.markdown)
+    assert any("Set aside" in e.label for e in at.expander)
+
+
+def test_accepting_items_in_the_review_form_makes_them_available_to_the_prep_tools():
+    import extract
+    from providers.fake import FakeProvider
+    candidate.save_cv("cv.md", NURSE_CV)
+    ok, _ = extract.extract_source(FakeProvider(), "CV", NURSE_CV.decode())
+    assert ok
+    at = run_app(view="__profile__")
+    pending = [i for i in extract.load()["items"] if i["status"] == "pending"]
+    for it in pending:
+        at.radio(key=f"rv_dec_{it['id']}").set_value("Accept")
+    next(b for b in at.button if b.label == "Apply decisions").click().run()
+    assert not at.exception, at.exception
+    assert all(i["status"] == "accepted" for i in extract.load()["items"] if i["verified"])
+    assert "Reviewed facts" in candidate.read_facts()

@@ -16,13 +16,13 @@ import settings
 MAX_CONTEXT = 60_000
 
 GROUND = """You are an interview coach helping one person prepare for one job. You are given documents between tags: \
-<profile> (built from their CV), <about> (written by them), <cv> (the CV for this role), <job> (the job description) and \
+<facts> (items the person reviewed and accepted, each with its source), <profile> (built from their CV), <about> (written by them), <cv> (the CV for this role), <job> (the job description) and \
 <intent> (what they want this application to show). Any of them may be missing.
 
 Rules that always apply:
 - Everything you say about the person must come from those documents. Never invent employers, dates, numbers, methods, \
 results, publications or skills. If a detail is not in the documents, write it as a gap.
-- After every statement about the person, name the document it came from in square brackets: [Profile], [About], [CV], [Intent]. \
+- After every statement about the person, name the document it came from in square brackets: [Facts], [Profile], [About], [CV], [Intent]. Prefer <facts> where it covers the point, and treat lines marked "(claim)" as unproven. \
 Statements about the job come from [Job].
 - General interview advice that is not from a document ends with [model knowledge].
 - Where the person would need a fact the documents lack, write a line starting with "GAP:" saying what to add. Do not fill it in.
@@ -87,7 +87,7 @@ def _clip(text: str, limit: int) -> str:
 def context(role: candidate.Role) -> str:
     """The person's documents and the job, in tagged blocks. Only what exists is included."""
     cv = role.cv() or candidate.cv_path()
-    parts = [("profile", candidate.read_profile()), ("about", candidate.read_about()),
+    parts = [("facts", candidate.read_facts()), ("profile", candidate.read_profile()), ("about", candidate.read_about()),
              ("cv", candidate.read_text(cv, 30_000) if cv else ""),
              ("job", candidate.job_description_text(role)), ("intent", candidate.intent_text(role))]
     head = f"Role: {role.name}" + (f" at {role.company}" if role.company else "") + f" ({role.kind} position)."
