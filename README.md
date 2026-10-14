@@ -168,6 +168,8 @@ Under Sources, **Project knowledge** lists each project with a **Build** button.
 - **Checked against the code.** Every `[file:lines]` citation in the document is checked against the real files. A citation that does not match is marked `(unverified)`, and the count is shown.
 - **Kept current.** The document stores a fingerprint of each file. The app shows how many files changed since it was written, and **Update** re-reads only those. A question about a project whose knowledge is out of date says so.
 - **Private.** The document is stored in `knowledge/` on your machine and is never committed. Building or updating sends the files through your Claude login, so the provider prompt applies. It needs the `claude` command, and the project must fit the single-pass limit (`whole_project.max_tokens.claude`).
+- **Deep read for large projects.** A project that does not fit in one request (the single-pass limit, `whole_project.max_tokens.claude`) is read in areas instead of refused. The files are split by folder into areas of about `deep_read.area_tokens` (60,000 tokens), and Claude Code, through your login, reads them with several workers at once (`deep_read.workers`, 3 by default). A last request reads the area notes and writes the overview, architecture and data flow, results, decisions and caveats. The `Files` section is the workers' own text. Each finished area is saved in `knowledge/`, so a stopped run continues, and an update reads again only the areas whose files changed. It uses a lot of your Claude plan's limit and can take a long time; a progress bar shows the steps.
+- **Claude or Ollama reads it.** The deep read window asks which provider may read the code, with no default. Choose **Ollama** to keep the code on your machine (unless the model is a `:cloud` model, which the window says leaves it). An Ollama model reads in much smaller areas (`deep_read.ollama.area_tokens`, 6,000) with one worker, and `deep_read.ollama.num_ctx` (12,288) sets how much text it holds, so set both to what your model and memory can take. Local models are slower and follow the note format less reliably, so check the result. When the notes are more than the model can hold, the final overview is written from shortened notes and the document says so. Gemini is not used. From the command line: `ask.py --build-knowledge my_project --knowledge-provider ollama`. The final overview is written from the notes, not from the code, so it can miss how areas connect. Citations are checked against the real files, but that proves only that the cited lines exist.
 - **From the command line:** `ask.py --build-knowledge my_project`, `--update-knowledge my_project`, `--knowledge-status`.
 - **Limits.** A summary written by a model can be wrong, and it is lossy for fine detail. The checked citations catch many errors but not all. Exact details still come from the real code pieces sent with each question, and Explore remains available for harder questions.
 
@@ -187,18 +189,22 @@ With both lists empty (the default) nothing is pinned. When a rule matches, the 
 
 ### 📁 Your own folders and projects
 
-`config.yaml` holds the defaults. Put your own paths in `config.local.yaml` (ignored by git), which is laid over `config.yaml`. Lists are replaced, not merged, so repeat any entry you want to keep:
+**Add a code project from the app.** In a role's Research tab, open **Sources**, then **Add a code project**. Type the folder of the project (for example `~/code/my_project`), optionally give it a name, press **Check folder** to see how many files would be read, then **Add and re-index**. The folder is only read, never changed, and nothing is sent anywhere when you add it. When it is added, the **deep read** opens by default (see Project knowledge below) and asks which provider may read the code; press Cancel to skip it. A small bin icon next to a project takes it off the list again, and your code is not touched. The button is hidden while the app is open to other devices (`--lan`), because the folder is read on the computer that runs the tool. These folders are refused: your home folder, a whole drive, folders that hold keys or credentials, `patient-data` folders, and this tool's own folder.
+
+**By hand.** The app saves projects in `config.local.yaml` (ignored by git), which is laid over `config.yaml`. You can edit that file yourself. Lists are replaced, not merged. If you add a `docs:` list, repeat the Profile and Roles entries or your profile and roles stop being searched:
 
 ```yaml
 docs:
   - {name: Library, path: library, exts: [.pdf, .md, .txt]}
+  - {name: Profile, path: workspace/profile, exts: [.pdf, .md, .txt]}
+  - {name: Roles, path: workspace/roles, exts: [.pdf, .md, .txt]}
   - {name: Papers, path: ~/papers, exts: [.pdf]}
 
 projects:                       # read-only project code
   - {name: my_project, path: ~/code/my_project}
 ```
 
-Project code is only searched when you tick the project in the interface, or use `--code` / `--sources`.
+Project code is only searched when you tick the project in the interface, or use `--code` / `--sources`. Saving the app's changes to `config.local.yaml` drops any comments you wrote in it.
 
 ## 🏷️ Citation tags
 

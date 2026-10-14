@@ -24,6 +24,7 @@ settings.setup_env()
 from consent import ConsentRequest                     # noqa: E402
 from engine import Engine, TurnResult, _claude_login   # noqa: E402
 import candidate
+import projects
 import safetext
 import webfetch                                        # noqa: E402
 import prep_ui                                          # noqa: E402
@@ -512,18 +513,33 @@ def consent_dialog(req: ConsentRequest):
 
 @st.dialog("Project knowledge", width="large")
 def knowledge_dialog(name: str, update: bool):
-    req, send = eng.knowledge_request(name, update)
-    if req is None:
+    req0, _ = eng.knowledge_request(name, update)
+    if req0 is None:
         st.error("This project has no readable files.")
         return
-    st.info(req.detail)
-    st.caption("Claude reads the files once and writes a document about the project. Later questions use the matching parts of it automatically. "
+    avail = [o for o in req0.options if o.available]
+    labels = {o.key: o.label for o in req0.options}
+    st.caption("A model reads the files and writes a document about the project. A large project is read in several parts, a few at a time. "
+               "Later questions use the matching parts of it automatically. "
                "The document stays on this machine (knowledge/) and is never committed. Every file and line it cites is checked against the code.")
-    st.code("\n".join(req.files[:15]) + (f"\n... and {len(req.files) - 15} more" if len(req.files) > 15 else ""), language=None)
+    pick = st.radio("Which provider may read the code?", [o.key for o in avail], index=None, format_func=labels.get, key="kb_provider",
+                    help="Claude reads it through your Claude Code login and gives the best result. An Ollama model reads it on this machine "
+                         "(unless it is a :cloud model), slower and less reliably. Gemini cannot do this.")
+    if not avail:
+        st.error("Neither Claude (through your login) nor Ollama is available. Install and log in to Claude Code, or start Ollama with a model.")
+    if pick:
+        req, send = eng.knowledge_request(name, update, pick)
+        st.info(req.detail)
+        st.code("\n".join(req.files[:15]) + (f"\n... and {len(req.files) - 15} more" if len(req.files) > 15 else ""), language=None)
+    else:
+        st.caption("Choose a provider to see what would be sent. Nothing is sent until you press the button.")
     c1, c2 = st.columns(2)
-    if c1.button("Update with Claude" if update else "Build with Claude", type="primary", use_container_width=True):
-        with st.spinner("Claude is reading the project. This can take a few minutes..."):
-            S.kb_msg = eng.build_knowledge(name, consent=lambda r: ["claude"], update=update)
+    if c1.button("Update" if update else "Build", type="primary", use_container_width=True, disabled=not pick):
+        bar = st.progress(0.0, text="Starting...")
+
+        def on_progress(done: int, total: int, label: str):
+            bar.progress(min(done / max(total, 1), 1.0), text=f"Reading {label} ({done} of {total} steps)")
+        S.kb_msg = eng.build_knowledge(name, consent=lambda r: [pick], update=update, progress=on_progress, provider=pick)
         st.rerun()
     if c2.button("Cancel, send nothing", use_container_width=True):
         st.rerun()
@@ -712,9 +728,52 @@ with left:
                             settings.set_removed_sources(gone - {g})
                             st.rerun()
             st.markdown('<span class="lbl">Project code, read-only</span>', unsafe_allow_html=True)
+            mine = set(projects.local_names()) if not projects.lan_mode() else set()
             for g in projs:
-                if st.checkbox(g, value=False, key=f"src-{g}", help="Using this asks which provider may receive the code"):
+                r1, r2 = st.columns([8, 1], vertical_alignment="center")
+                if r1.checkbox(g, value=False, key=f"src-{g}", help="Using this asks which provider may receive the code"):
                     sel.add(g)
+                if g in mine and r2.button("", key=f"pj-rm-{g}", icon=":material/delete:", type="tertiary",
+                                           help="Take this project off the list. Your code is not touched."):
+                    projects.remove(g)
+                    with st.spinner("Re-indexing..."):
+                        rebuild_index()
+                    S.proj_msg = (True, f"Removed {g} from the list. Your code was not touched.")
+                    st.rerun()
+            if projects.lan_mode():
+                st.caption("Adding a code project is switched off while the app is open to other devices (--lan).")
+            else:
+                S.setdefault("proj_round", 0)
+                with st.expander("Add a code project", expanded=bool(S.get("proj_msg"))):
+                    if S.get("proj_msg"):
+                        done, msg = S.pop("proj_msg")
+                        (st.success if done else st.error)(msg)
+                    st.caption("The folder is only read, never changed, and nothing is sent anywhere when you add it. "
+                               "Each question that would send code asks which provider may receive it.")
+                    pj_path = st.text_input("Folder", placeholder="~/code/my_project", key=f"proj_path_{S.proj_round}")
+                    pj_name = st.text_input("Name (optional)", placeholder="defaults to the folder name", key=f"proj_name_{S.proj_round}")
+                    b1, b2 = st.columns(2)
+                    if b1.button("Check folder", key="proj-check", use_container_width=True, disabled=not pj_path.strip()):
+                        try:
+                            pv = projects.preview(projects.check_path(pj_path), cfg)
+                            st.info(f"{pv.readable} files would be read ({pv.size_bytes / 1e6:.1f} MB). {pv.skipped} other files are left out "
+                                    "(images, secrets, large files, build folders). " + ("Examples: " + ", ".join(pv.examples) if pv.examples else
+                                    "No readable code files were found."))
+                        except ValueError as e:
+                            st.error(str(e))
+                    if b2.button("Add and re-index", key="proj-add", use_container_width=True, disabled=not pj_path.strip(), type="primary"):
+                        try:
+                            name = projects.add(pj_path, pj_name)
+                            with st.spinner("Re-indexing (this can take a few minutes for a large project)..."):
+                                rebuild_index()
+                            S.proj_msg = (True, f"Added {name} and re-indexed. Tick it in the list to use it.")
+                            S.kb_open = name                       # a deep read is the default: it opens next, and asks which provider first
+                            S.proj_round += 1
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
+            if S.get("kb_open"):
+                knowledge_dialog(S.pop("kb_open"), False)
             depth = st.radio("Code depth", ["Retrieve", "Whole project", "Explore"], horizontal=True, key="code_depth", label_visibility="collapsed",
                              help="Retrieve sends only the best-matching pieces. Whole project sends every readable file of the ticked project in one request. "
                                   "Explore lets Claude open files itself in a read-only copy, through your Claude login (slower).")

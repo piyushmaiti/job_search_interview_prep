@@ -42,10 +42,20 @@ class FakeProvider(Provider):
         return ProviderResult(text=f"I explored the project.{cite} Generally this is common practice [M]. A third point [{files[0]}:9999].",
                               model=f"{self.model} · explore")
 
-    def complete(self, system, prompt, timeout=None):
+    def complete(self, system, prompt, timeout=None, num_ctx=None):
         """Offline stand-in for writing the project knowledge document from the files in the prompt."""
         import re
         self.calls.append({"complete": True, "system": system, "prompt": prompt})
+        if system.startswith("You are one of several readers"):
+            paths = re.findall(r'<file path="([^"]+)">', prompt)
+            files = "".join(f"\n\n### {p}\nPurpose of {p} [{p}:1-1]." for p in paths)
+            return ProviderResult(text=("=== FILES ===" + files + f"\n\n=== SUMMARY ===\nThis area has {len(paths)} files [{paths[0] if paths else 'x'}:1-1]."
+                                  "\n\n=== RESULTS ===\nnot stated\n\n=== DECISIONS ===\nnot stated\n\n=== CAVEATS ===\nnone\n\n=== GLOSSARY ===\nnone"), model=f"{self.model} · area")
+        if system.startswith("You are the final reader"):
+            n = len(re.findall(r"<area label=", prompt))
+            return ProviderResult(text=f"## Overview\nA demo project read in {n} areas.\n## Architecture and data flow\nAreas feed each other.\n"
+                                  "## Experiments, results and numbers\nnot stated\n## Design decisions and rationale\nnot stated\n"
+                                  "## Caveats, limitations and open questions\nnone\n## Glossary\nnone", model=f"{self.model} · merge")
         if system.startswith("You extract structured facts"):
             import json as _json
             doc = prompt.split("DOCUMENT:\n", 1)[-1].rsplit("\n\nReturn the JSON", 1)[0]
