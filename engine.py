@@ -14,6 +14,7 @@ import explore
 import knowledge
 import projectctx
 import candidate
+import deepread
 import settings
 from citations import Segment, render, render_explore, to_plain
 from consent import ConsentFn, ConsentRequest, cli_consent, options_for
@@ -236,11 +237,29 @@ class Engine:
             notes.append(note)
         return chunks, notes
 
+    def _deep(self, name: str, files: dict, update: bool) -> bool:
+        """A project too big for one request, or one whose knowledge was built by a deep read, is read in areas."""
+        cap = projectctx.caps(self.cfg)["claude"]
+        return sum(f.tokens for f in files.values()) > cap or (update and deepread.has_cache(name))
+
     def knowledge_request(self, name: str, update: bool = False):
         """What building (or updating) the knowledge for a project would send, as a consent request, plus the files."""
         files = knowledge.current_files(self.cfg, name)
         if not files:
             return None, []
+        if self._deep(name, files, update):
+            areas, todo = deepread.plan_work(self.cfg, name, files)
+            send = [f for a in todo for f in a.files]
+            tokens = sum(f.tokens for f in send)
+            options = options_for(self.providers)
+            for o in options:
+                if o.key != "claude":
+                    o.available, o.note = False, "a deep read is done by Claude Code"
+            workers = deepread.settings_for(self.cfg)["workers"]
+            detail = (f"Deep read of {name}: Claude, through your Claude Code login, will read {len(todo)} of {len(areas)} areas "
+                      f"({len(send)} files, about {tokens:,} tokens), up to {workers} at a time, then write a final overview. That is {len(todo) + 1} requests. "
+                      "It uses a lot of your Claude plan's limit and can take a long time. Finished areas are kept on this machine, so a stopped run continues.")
+            return ConsentRequest([f"{name}/{f.rel}" for f in send], options, scope="knowledge", detail=detail), send
         if update:
             st = knowledge.status(self.cfg, name)
             send = [files[r] for r in st.changed + st.added if r in files]
@@ -255,7 +274,7 @@ class Engine:
                   f"will read {len(send)} files (about {tokens:,} tokens) and write a document about them, which is kept on this machine.")
         return ConsentRequest([f"{name}/{f.rel}" for f in send], options, scope="knowledge", detail=detail), send
 
-    def build_knowledge(self, name: str, consent: ConsentFn = cli_consent, update: bool = False) -> tuple[bool, str]:
+    def build_knowledge(self, name: str, consent: ConsentFn = cli_consent, update: bool = False, progress=None) -> tuple[bool, str]:
         """Claude reads the whole project once and writes the knowledge document. Returns (done, message)."""
         login = _claude_login(self.providers.get("claude"))
         ok, why = login.available() if login else (False, "")
@@ -271,6 +290,8 @@ class Engine:
         req, send = self.knowledge_request(name, update)
         if update and not send and not knowledge.status(self.cfg, name).removed:
             return False, "Nothing has changed since the knowledge was built."
+        if self._deep(name, files_now, update):
+            return self._deep_build(name, login, files_now, req, consent, progress)
         tokens = sum(f.tokens for f in send) + (knowledge.estimate_tokens(len(existing[0])) if update else 0)
         cap = projectctx.caps(self.cfg)["claude"]
         if tokens > cap:
@@ -293,6 +314,22 @@ class Engine:
         doc, n_ok, n_bad = knowledge.verify_citations(text, files_now)
         knowledge.save(name, doc, knowledge.record(name, doc, files_now, res.model, n_ok, n_bad))
         return True, (f"{'Updated' if update else 'Built'} project knowledge for {name}: {len(files_now)} files, "
+                      f"{knowledge.estimate_tokens(len(doc)):,} tokens. {n_ok} citations checked against the code, {n_bad} unverified.")
+
+    def _deep_build(self, name, login, files_now, req, consent, progress) -> tuple[bool, str]:
+        """Read the project in areas with several Claude workers, then write the document. Finished areas are kept if it stops."""
+        approved = consent(req)
+        if not approved or "claude" not in approved:
+            return False, "Cancelled. Nothing was sent to any model."
+        try:
+            res = deepread.deep_read(login, self.cfg, name, files_now, progress)
+        except (ProviderError, ValueError) as e:
+            return False, f"The deep read of {name} stopped: {e} Areas that were finished are kept, so running it again continues."
+        doc, n_ok, n_bad = knowledge.verify_citations(res.doc, files_now)
+        if not knowledge.looks_like_a_document(doc):
+            return False, "The deep read did not produce a usable document. Nothing was saved. Try again."
+        knowledge.save(name, doc, knowledge.record(name, doc, files_now, res.model, n_ok, n_bad))
+        return True, (f"Deep read of {name}: {len(files_now)} files in {res.areas} areas ({res.reused} reused from before), {res.calls} Claude requests, "
                       f"{knowledge.estimate_tokens(len(doc)):,} tokens. {n_ok} citations checked against the code, {n_bad} unverified.")
 
     # ------------------------------------------------------------ explore

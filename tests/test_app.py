@@ -365,6 +365,8 @@ def test_a_code_project_can_be_added_from_the_sources_panel_and_appears_ticked_o
     assert not at.exception, at.exception
     assert "new_code" in [p["name"] for p in yaml.safe_load(settings.LOCAL_CONFIG.read_text())["projects"]]
     assert at.checkbox(key="src-new_code").value is False, "added projects start unticked"
+    assert any(b.label == "Build with Claude" for b in at.button), "the deep read opens next and waits for the user's choice"
+    assert not extract_free_knowledge("new_code"), "nothing is read or sent until the user presses the button"
 
 
 def test_adding_a_project_shows_an_error_for_a_bad_folder_and_is_hidden_in_lan_mode(monkeypatch):
@@ -379,3 +381,8 @@ def test_adding_a_project_shows_an_error_for_a_bad_folder_and_is_hidden_in_lan_m
     assert not at.exception, at.exception
     assert not [t for t in at.text_input if t.key and t.key.startswith("proj_path")]
     assert any("switched off" in c.value for c in at.caption)
+
+
+def extract_free_knowledge(name):
+    import knowledge
+    return knowledge.load(name)

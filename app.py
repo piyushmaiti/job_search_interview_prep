@@ -518,13 +518,17 @@ def knowledge_dialog(name: str, update: bool):
         st.error("This project has no readable files.")
         return
     st.info(req.detail)
-    st.caption("Claude reads the files once and writes a document about the project. Later questions use the matching parts of it automatically. "
+    st.caption("Claude reads the files and writes a document about the project. A large project is read in several parts, a few at a time. "
+               "Later questions use the matching parts of it automatically. "
                "The document stays on this machine (knowledge/) and is never committed. Every file and line it cites is checked against the code.")
     st.code("\n".join(req.files[:15]) + (f"\n... and {len(req.files) - 15} more" if len(req.files) > 15 else ""), language=None)
     c1, c2 = st.columns(2)
     if c1.button("Update with Claude" if update else "Build with Claude", type="primary", use_container_width=True):
-        with st.spinner("Claude is reading the project. This can take a few minutes..."):
-            S.kb_msg = eng.build_knowledge(name, consent=lambda r: ["claude"], update=update)
+        bar = st.progress(0.0, text="Starting...")
+
+        def on_progress(done: int, total: int, label: str):
+            bar.progress(min(done / max(total, 1), 1.0), text=f"Reading {label} ({done} of {total} steps)")
+        S.kb_msg = eng.build_knowledge(name, consent=lambda r: ["claude"], update=update, progress=on_progress)
         st.rerun()
     if c2.button("Cancel, send nothing", use_container_width=True):
         st.rerun()
@@ -752,10 +756,13 @@ with left:
                             with st.spinner("Re-indexing (this can take a few minutes for a large project)..."):
                                 rebuild_index()
                             S.proj_msg = (True, f"Added {name} and re-indexed. Tick it in the list to use it.")
+                            S.kb_open = name                       # a deep read is the default: it opens next, and asks which provider first
                             S.proj_round += 1
                             st.rerun()
                         except ValueError as e:
                             st.error(str(e))
+            if S.get("kb_open"):
+                knowledge_dialog(S.pop("kb_open"), False)
             depth = st.radio("Code depth", ["Retrieve", "Whole project", "Explore"], horizontal=True, key="code_depth", label_visibility="collapsed",
                              help="Retrieve sends only the best-matching pieces. Whole project sends every readable file of the ticked project in one request. "
                                   "Explore lets Claude open files itself in a read-only copy, through your Claude login (slower).")

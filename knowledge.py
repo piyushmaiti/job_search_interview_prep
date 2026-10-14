@@ -106,6 +106,7 @@ def save(name: str, doc: str, info: dict) -> None:
 def delete(name: str) -> None:
     for p in _paths(name):
         settings.assert_writable(p).unlink(missing_ok=True)
+    settings.assert_writable(settings.KNOWLEDGE_DIR / f"{name}.deep.json").unlink(missing_ok=True)      # the deep-read notes, if any
 
 
 @functools.lru_cache(maxsize=4096)

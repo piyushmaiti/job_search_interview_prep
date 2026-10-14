@@ -99,7 +99,8 @@ def main(argv=None) -> int:
     eng = Engine(cfg, index, providers)
 
     if a.build_knowledge or a.update_knowledge:
-        done, msg = eng.build_knowledge(a.build_knowledge or a.update_knowledge, consent=cli_consent, update=bool(a.update_knowledge))
+        done, msg = eng.build_knowledge(a.build_knowledge or a.update_knowledge, consent=cli_consent, update=bool(a.update_knowledge),
+                                       progress=lambda d, t, label: print(f"  reading {label} ({d} of {t})"))
         print(msg)
         return 0 if done else 1
     if a.knowledge_status:

@@ -135,11 +135,14 @@ def test_update_with_no_changes_sends_nothing(tmp_path, providers):
     assert not ok and "Nothing has changed" in msg and len(providers["claude"].calls) == n
 
 
-def test_too_large_for_one_pass_is_refused_before_asking(tmp_path, providers):
+def test_a_project_too_large_for_one_pass_is_read_in_areas_after_asking(tmp_path, providers):
     eng = build(tmp_path, providers)
     eng.cfg["whole_project"]["max_tokens"]["claude"] = 10
-    ok, msg = eng.build_knowledge("proj", lambda req: pytest.fail("must not ask"))
-    assert not ok and "too large" in msg
+    eng.cfg["deep_read"] = {"area_tokens": 20, "workers": 2}
+    seen = []
+    ok, msg = eng.build_knowledge("proj", lambda req: (seen.append(req), ["claude"])[1])
+    assert ok and "Deep read" in msg and seen and "areas" in seen[0].detail and "lot of your Claude plan" in seen[0].detail
+    assert knowledge.load("proj") is not None
 
 
 def test_a_bad_reply_is_not_saved(tmp_path, providers):
