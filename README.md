@@ -72,15 +72,14 @@ Your private files live in `workspace/` (git-ignored): `workspace/profile/`, `wo
 - **Works with a Claude subscription or an API key.** Ordinary questions can go through the `claude -p` command with your Claude login, so they do not use the API. See [Claude access](#claude-access).
 - **Makes infographics** with Gemini's image model when you ask for one ("make an infographic of the methods").
 - **Remembers the conversation** (switchable), saves chats (and lets you delete them), lets you add papers by upload or URL, preview any source, and remove sources you no longer want searched.
-- **Looks calm.** A Morning/Night theme, a small web interface and a command line.
 
 ## 📦 Install
 
 You need Python 3.10 or newer. It has been tested on Linux. macOS should work, Windows is untested.
 
 ```bash
-git clone <this repository>
-cd <the folder it creates>
+git clone https://github.com/piyushmaiti/job_search_interview_prep.git
+cd job_search_interview_prep
 python3 -m venv .venv
 .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu   # optional: CPU-only torch keeps the install small
 .venv/bin/pip install -r requirements.txt
