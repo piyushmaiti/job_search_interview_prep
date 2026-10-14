@@ -186,18 +186,22 @@ With both lists empty (the default) nothing is pinned. When a rule matches, the 
 
 ### 📁 Your own folders and projects
 
-`config.yaml` holds the defaults. Put your own paths in `config.local.yaml` (ignored by git), which is laid over `config.yaml`. Lists are replaced, not merged, so repeat any entry you want to keep:
+**Add a code project from the app.** In a role's Research tab, open **Sources**, then **Add a code project**. Type the folder of the project (for example `~/code/my_project`), optionally give it a name, press **Check folder** to see how many files would be read, then **Add and re-index**. The folder is only read, never changed, and nothing is sent anywhere when you add it. A small bin icon next to a project takes it off the list again, and your code is not touched. The button is hidden while the app is open to other devices (`--lan`), because the folder is read on the computer that runs the tool. These folders are refused: your home folder, a whole drive, folders that hold keys or credentials, `patient-data` folders, and this tool's own folder.
+
+**By hand.** The app saves projects in `config.local.yaml` (ignored by git), which is laid over `config.yaml`. You can edit that file yourself. Lists are replaced, not merged. If you add a `docs:` list, repeat the Profile and Roles entries or your profile and roles stop being searched:
 
 ```yaml
 docs:
   - {name: Library, path: library, exts: [.pdf, .md, .txt]}
+  - {name: Profile, path: workspace/profile, exts: [.pdf, .md, .txt]}
+  - {name: Roles, path: workspace/roles, exts: [.pdf, .md, .txt]}
   - {name: Papers, path: ~/papers, exts: [.pdf]}
 
 projects:                       # read-only project code
   - {name: my_project, path: ~/code/my_project}
 ```
 
-Project code is only searched when you tick the project in the interface, or use `--code` / `--sources`.
+Project code is only searched when you tick the project in the interface, or use `--code` / `--sources`. Saving the app's changes to `config.local.yaml` drops any comments you wrote in it.
 
 ## 🏷️ Citation tags
 

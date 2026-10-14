@@ -24,6 +24,7 @@ settings.setup_env()
 from consent import ConsentRequest                     # noqa: E402
 from engine import Engine, TurnResult, _claude_login   # noqa: E402
 import candidate
+import projects
 import safetext
 import webfetch                                        # noqa: E402
 import prep_ui                                          # noqa: E402
@@ -712,9 +713,49 @@ with left:
                             settings.set_removed_sources(gone - {g})
                             st.rerun()
             st.markdown('<span class="lbl">Project code, read-only</span>', unsafe_allow_html=True)
+            mine = set(projects.local_names()) if not projects.lan_mode() else set()
             for g in projs:
-                if st.checkbox(g, value=False, key=f"src-{g}", help="Using this asks which provider may receive the code"):
+                r1, r2 = st.columns([8, 1], vertical_alignment="center")
+                if r1.checkbox(g, value=False, key=f"src-{g}", help="Using this asks which provider may receive the code"):
                     sel.add(g)
+                if g in mine and r2.button("", key=f"pj-rm-{g}", icon=":material/delete:", type="tertiary",
+                                           help="Take this project off the list. Your code is not touched."):
+                    projects.remove(g)
+                    with st.spinner("Re-indexing..."):
+                        rebuild_index()
+                    S.proj_msg = (True, f"Removed {g} from the list. Your code was not touched.")
+                    st.rerun()
+            if projects.lan_mode():
+                st.caption("Adding a code project is switched off while the app is open to other devices (--lan).")
+            else:
+                S.setdefault("proj_round", 0)
+                with st.expander("Add a code project", expanded=bool(S.get("proj_msg"))):
+                    if S.get("proj_msg"):
+                        done, msg = S.pop("proj_msg")
+                        (st.success if done else st.error)(msg)
+                    st.caption("The folder is only read, never changed, and nothing is sent anywhere when you add it. "
+                               "Each question that would send code asks which provider may receive it.")
+                    pj_path = st.text_input("Folder", placeholder="~/code/my_project", key=f"proj_path_{S.proj_round}")
+                    pj_name = st.text_input("Name (optional)", placeholder="defaults to the folder name", key=f"proj_name_{S.proj_round}")
+                    b1, b2 = st.columns(2)
+                    if b1.button("Check folder", key="proj-check", use_container_width=True, disabled=not pj_path.strip()):
+                        try:
+                            pv = projects.preview(projects.check_path(pj_path), cfg)
+                            st.info(f"{pv.readable} files would be read ({pv.size_bytes / 1e6:.1f} MB). {pv.skipped} other files are left out "
+                                    "(images, secrets, large files, build folders). " + ("Examples: " + ", ".join(pv.examples) if pv.examples else
+                                    "No readable code files were found."))
+                        except ValueError as e:
+                            st.error(str(e))
+                    if b2.button("Add and re-index", key="proj-add", use_container_width=True, disabled=not pj_path.strip(), type="primary"):
+                        try:
+                            name = projects.add(pj_path, pj_name)
+                            with st.spinner("Re-indexing (this can take a few minutes for a large project)..."):
+                                rebuild_index()
+                            S.proj_msg = (True, f"Added {name} and re-indexed. Tick it in the list to use it.")
+                            S.proj_round += 1
+                            st.rerun()
+                        except ValueError as e:
+                            st.error(str(e))
             depth = st.radio("Code depth", ["Retrieve", "Whole project", "Explore"], horizontal=True, key="code_depth", label_visibility="collapsed",
                              help="Retrieve sends only the best-matching pieces. Whole project sends every readable file of the ticked project in one request. "
                                   "Explore lets Claude open files itself in a read-only copy, through your Claude login (slower).")

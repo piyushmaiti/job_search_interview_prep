@@ -24,7 +24,8 @@ def sample_setup(monkeypatch, tmp_path):
     candidate.save_cv("cv.md", b"# Alex Doe\nImaging scientist with PyTorch experience.")
     role = candidate.create_role("Test role", "Acme", "Industry", "We need a scientist who knows PyTorch.", "Show my imaging work.", use_main_cv=True)
     monkeypatch.setattr(sys.modules[__name__], "ROLE_SLUG", role.slug)
-    local = tmp_path / "config.local.yaml"
+    local = settings.TOOL_DIR / ".test_scratch" / "config.local.yaml"
+    local.parent.mkdir(parents=True, exist_ok=True)
     local.write_text(f"docs:\n  - {{name: Library, path: {settings.TOOL_DIR / 'library' / 'examples'}, exts: [.md]}}\n"
                      f"  - {{name: Profile, path: {ws / 'profile'}, exts: [.pdf, .md, .txt]}}\n"
                      f"  - {{name: Roles, path: {ws / 'roles'}, exts: [.pdf, .md, .txt]}}\n"
@@ -346,3 +347,35 @@ def test_mock_interview_goes_from_question_to_feedback():
     assert not at.exception, at.exception
     assert not at.error, [e.value for e in at.error]
     assert any("A stronger version" in m.value for m in at.markdown)
+
+
+# ---------------------------------------------------------------- adding a code project from the menu
+def test_a_code_project_can_be_added_from_the_sources_panel_and_appears_ticked_off(tmp_path):
+    import yaml
+    d = tmp_path / "new_code"
+    d.mkdir()
+    (d / "tool.py").write_text("def hello():\n    return 'hi'\n")
+    at = run_app()
+    assert not at.exception, at.exception
+    at.text_input(key="proj_path_0").set_value(str(d)).run()
+    next(b for b in at.button if b.label == "Check folder").click().run()
+    assert not at.exception and any("1 files would be read" in i.value for i in at.info), [i.value for i in at.info]
+    at.text_input(key="proj_path_0").set_value(str(d)).run()
+    next(b for b in at.button if b.label == "Add and re-index").click().run()
+    assert not at.exception, at.exception
+    assert "new_code" in [p["name"] for p in yaml.safe_load(settings.LOCAL_CONFIG.read_text())["projects"]]
+    assert at.checkbox(key="src-new_code").value is False, "added projects start unticked"
+
+
+def test_adding_a_project_shows_an_error_for_a_bad_folder_and_is_hidden_in_lan_mode(monkeypatch):
+    at = run_app()
+    at.text_input(key="proj_path_0").set_value("/nonexistent/nowhere").run()
+    next(b for b in at.button if b.label == "Add and re-index").click().run()
+    assert not at.exception and any("does not exist" in e.value for e in at.error)
+    monkeypatch.setenv("INTERVIEW_PREP_LAN", "1")
+    at = gate_app(monkeypatch, "gate-one-xyz")
+    at.text_input(key="passcode_entry").set_value("gate-one-xyz")
+    at.button[0].click().run()
+    assert not at.exception, at.exception
+    assert not [t for t in at.text_input if t.key and t.key.startswith("proj_path")]
+    assert any("switched off" in c.value for c in at.caption)
