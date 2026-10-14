@@ -24,7 +24,7 @@ import settings
 
 KINDS = ("Industry", "Academic")
 CV_EXTS = (".pdf", ".docx", ".md", ".txt")
-PROFILE_PINNED = ["profile.md", "about.md", "cv.*"]
+PROFILE_PINNED = ["profile.md", "facts.md", "about.md", "cv.*"]
 ROLE_PINNED = ["job_description.md", "intent.md"]
 MAX_UPLOAD_BYTES = 20_000_000
 MAX_DOCX_XML = 10_000_000          # unpacked text of a .docx; a real CV is far smaller
@@ -215,6 +215,14 @@ def profile_md_path() -> Path:
 def read_profile() -> str:
     try:
         return profile_md_path().read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def read_facts() -> str:
+    """The facts the person has reviewed and accepted (written by extract.py). Empty until at least one is accepted."""
+    try:
+        return (profile_dir() / "facts.md").read_text(encoding="utf-8")
     except OSError:
         return ""
 
@@ -454,7 +462,7 @@ def source_label(group: str) -> str:
     if group.startswith("profile/publications/"):
         return f"Publication: {stem}"
     if group.startswith("profile/"):
-        return {"profile": "My profile", "about": "About me", "cv": "My main CV"}.get(stem, name)
+        return {"profile": "My profile", "facts": "My reviewed facts", "about": "About me", "cv": "My main CV"}.get(stem, name)
     if group.startswith("roles/"):
         return {"job_description": "Job description", "intent": "My intent", "cv": "CV for this role"}.get(stem, name)
     return name

@@ -46,6 +46,21 @@ class FakeProvider(Provider):
         """Offline stand-in for writing the project knowledge document from the files in the prompt."""
         import re
         self.calls.append({"complete": True, "system": system, "prompt": prompt})
+        if system.startswith("You extract structured facts"):
+            import json as _json
+            doc = prompt.split("DOCUMENT:\n", 1)[-1].rsplit("\n\nReturn the JSON", 1)[0]
+            lines = [x.strip().lstrip("#- ").strip() for x in doc.splitlines() if len(x.strip().lstrip("#- ").strip()) > 25]
+            items = []
+            if lines:
+                items.append({"id": "p1", "kind": "position", "label": "fact", "text": lines[0][:60], "evidence": lines[0][:120],
+                              "title": lines[0][:30], "organisation": None, "location": None, "start": None, "end": None})
+            if len(lines) > 1:
+                items.append({"id": "w1", "kind": "work", "label": "fact", "text": lines[1][:80], "evidence": lines[1][:120], "position": "p1"})
+            if len(lines) > 2:
+                items.append({"id": "s1", "kind": "statement", "label": "framing", "text": lines[2][:80], "evidence": lines[2][:120]})
+            items.append({"id": "x1", "kind": "result", "label": "fact", "text": "Ran the entire company single-handedly",
+                          "evidence": "I ran the entire company single-handedly", "position": "p1", "metric": None})
+            return ProviderResult(text=_json.dumps({"items": items}), model=f"{self.model} · extract")
         if system.startswith("You build a candidate profile"):
             return ProviderResult(text="# Profile: the candidate\n\n## Summary\nA demo profile built offline from the uploaded documents. " + "x" * 200 +
                                   "\n\n## Experience\n### Demo role, Demo organisation (2020 to 2024)\n- Did demo work.\n\n## Education\nNot stated.\n",
