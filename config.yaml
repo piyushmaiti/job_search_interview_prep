@@ -1,0 +1,68 @@
+models:
+  claude: claude-opus-5-5
+  gemini: gemini-3.8-flash          # text + Google Search grounding; confirm against Google's current docs
+  gemini_image: gemini-nano-banana-2.1   # "Nano Banana"; confirm against Google's current docs
+  ollama: null                      # null = first installed non-cloud model
+  claude_access: auto   # auto = login for ordinary questions, API key only when web search is on; login = `claude -p` only; api = API key only
+  claude_effort: medium
+  claude_fallbacks: true            # let Anthropic retry a declined request on another Claude model (supported models only)
+
+# One line about how you use the tool, added to the model's instructions. Example: "helping me review the literature on amyloid PET".
+assistant_role: ""                  # leave empty: the tool describes itself (interview preparation). Set a sentence here to replace it.
+
+default_mode: auto                  # auto | claude | gemini | ollama | compare
+
+retrieval:
+  k: 8
+  chunk_chars: 1200
+  overlap_chars: 150
+  embed_model: sentence-transformers/all-MiniLM-L6-v2
+  whole_doc_char_cap: 400000        # limit when a whole-paper task passes full text
+  pinned_docs: []                   # file name patterns, such as ["*style_guide*"], of documents sent in full whenever a question matches pinned_when
+  pinned_when: []                   # case-insensitive regular expressions, such as ["\bour guidelines\b"]; with both lists empty nothing is pinned
+  whole_small_docs_chars: 24000     # a paper or note shorter than this (about 6,000 tokens, like a short report) is sent whole when any of it matches; 0 turns this off
+  low_priority: ["*train_log*", "*.log", "*.tex"]   # searchable, but they rank lower so they do not crowd out code
+
+chat:
+  memory: true
+  memory_turns: 4
+
+web:
+  default: false
+
+# Document sources: papers and notes, sent to a model without a prompt.
+# Put your PDFs, Markdown and text files in library/ (uploads and saved web pages land in library/added).
+# More folders can be listed here; relative paths are taken from this folder.
+docs:
+  - {name: Library, path: library, exts: [.pdf, .md, .txt]}
+  - {name: Profile, path: workspace/profile, exts: [.pdf, .md, .txt]}     # your profile: managed on the Profile page
+  - {name: Roles, path: workspace/roles, exts: [.pdf, .md, .txt]}         # one folder per role: managed on the role tabs
+
+# Project code: read-only, and every query that uses it asks which provider may receive it.
+# Example (add your own in config.local.yaml, which is never committed):
+#   - {name: my_project, path: /path/to/my_project}
+# A project may add `nifti_headers: true` to include the names, sizes and NIfTI header fields (never the voxel data) of its imaging files.
+projects: []
+
+# Whole-project questions (the "Whole project" code depth): the largest files are left out when a project is over a model's limit.
+whole_project:
+  max_tokens: {claude: 150000, gemini: 700000}
+  skip_globs: ["*.tex", "*.log", "*requirements*.txt", "*lock*", "*train_log*"]     # low-value files left out of whole-project questions
+
+# Explore mode: Claude reads a sanitized read-only copy of the ticked project through your Claude Code login.
+explore:
+  timeout_seconds: 900            # an explore question that runs longer is stopped
+  max_chars: 30000000             # size limit for the copy
+
+# Project knowledge: Claude reads a project once and writes a lasting document that later questions use automatically.
+knowledge:
+  use: true                       # use built knowledge for questions about ticked projects
+  max_chars: 20000                # at most this much of the document goes with each question
+  timeout_seconds: 1200           # building or updating that runs longer is stopped
+
+project_exts: [.py, .ts, .tsx, .js, .jsx, .md, .tex, .txt, .yaml, .yml, .toml, .sh]
+max_file_bytes: 400000        # per code/text file in project directories
+max_doc_bytes: 60000000       # per paper or note
+
+# Extra directory names to skip. Cannot remove the built-in exclusions (see settings.py).
+extra_excludes: []

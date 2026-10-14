@@ -1,0 +1,10 @@
+anthropic
+google-genai
+pypdf
+numpy
+scikit-learn
+pyyaml
+streamlit
+requests
+beautifulsoup4
+sentence-transformers   # install CPU-only torch first: pip install torch --index-url https://download.pytorch.org/whl/cpu

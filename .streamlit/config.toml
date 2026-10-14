@@ -1,0 +1,13 @@
+[theme]
+base = "light"
+primaryColor = "#2a8a85"
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[server]
+headless = true
+address = "127.0.0.1"
