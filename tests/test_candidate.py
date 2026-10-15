@@ -56,35 +56,6 @@ def test_about_text_round_trips_and_clears():
     assert candidate.read_about() == ""
 
 
-def test_build_profile_uses_the_documents_and_keeps_contact_details_out_of_the_instructions():
-    candidate.save_cv("cv.md", b"# Alex Doe\nPyTorch since 2019.")
-    candidate.save_about("I like hard problems.")
-    candidate.save_publication("paper.md", b"# A paper on harmonization")
-    fake = FakeProvider()
-    ok, msg = candidate.build_profile(fake.complete)
-    assert ok, msg
-    call = fake.calls[-1]
-    assert "PyTorch since 2019" in call["prompt"] and "I like hard problems" in call["prompt"] and "harmonization" in call["prompt"]
-    assert "never invent" in call["system"].lower() and "contact details" in call["system"].lower()
-    assert candidate.read_profile().startswith("# Profile") and candidate.profile_status()["built"]
-    assert not candidate.profile_status()["stale"]
-    candidate.save_about("Changed.")
-    assert candidate.profile_status()["stale"], "changed inputs make the profile stale"
-
-
-def test_a_bad_model_answer_changes_nothing():
-    candidate.save_cv("cv.md", b"# Alex")
-    candidate.write_profile("# Profile: old\n\n## Experience\n" + "x" * 300)
-    junk = lambda system, prompt, timeout=None: SimpleNamespace(text="Sure! Here you go.", model="m")
-    ok, msg = candidate.build_profile(junk)
-    assert not ok and candidate.read_profile().startswith("# Profile: old")
-    assert candidate.build_profile(None)[0] is False
-
-
-def test_build_profile_needs_a_cv():
-    ok, msg = candidate.build_profile(FakeProvider().complete)
-    assert not ok and "CV" in msg
-
 
 def test_create_role_saves_the_job_description_as_markdown():
     candidate.save_cv("cv.md", b"# Main CV")
@@ -138,7 +109,7 @@ def test_configured_pins_your_documents_and_tells_the_model_not_to_invent(cfg):
     candidate.save_cv("cv.md", b"# CV")
     r = candidate.create_role("R", "Co", "Academic", "jd", "", use_main_cv=True)
     c = candidate.configured(cfg, r)
-    assert "profile.md" in c["retrieval"]["pinned_docs"] and "job_description.md" in c["retrieval"]["pinned_docs"]
+    assert "about.md" in c["retrieval"]["pinned_docs"] and "cv.*" in c["retrieval"]["pinned_docs"] and "profile.md" not in c["retrieval"]["pinned_docs"] and "job_description.md" in c["retrieval"]["pinned_docs"]
     assert "." in c["retrieval"]["pinned_when"]
     assert "never invent" in c["assistant_role"] and "R, Co" in c["assistant_role"] and "academic" in c["assistant_role"]
     assert cfg["retrieval"]["pinned_docs"] == [], "the original config is not changed"
@@ -152,7 +123,6 @@ def test_your_documents_reach_every_answer_for_the_role(cfg, monkeypatch):
     monkeypatch.setattr(index_mod, "StEmbedder", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("keyword index only")))
     monkeypatch.setattr(settings, "INDEX_DIR", settings.TOOL_DIR / ".test_scratch" / "index")
     candidate.save_cv("cv.md", b"# Alex Doe\nBuilt a harmonization model in PyTorch.")
-    candidate.write_profile("# Profile: Alex\n\n## Experience\n### Scientist, Lab\n- Wrote the harmonization code.\n" + "x" * 200)
     r = candidate.create_role("Imaging Scientist", "Acme", "Industry", "Requirements: Kubernetes and Go experience.", "", use_main_cv=True)
     other = candidate.create_role("Other job", "Else", "Industry", "Requirements: Fortran.", "", use_main_cv=True)
     c = dict(cfg)
@@ -173,7 +143,57 @@ def test_your_documents_reach_every_answer_for_the_role(cfg, monkeypatch):
 
 def test_source_labels_are_readable():
     f = candidate.source_label
-    assert f("profile/profile.md") == "My profile" and f("profile/cv.pdf") == "My main CV" and f("profile/about.md") == "About me"
+    assert f("profile/cv.pdf") == "My main CV" and f("profile/about.md") == "About me"
     assert f("profile/publications/my-paper.pdf") == "Publication: my-paper"
     assert f("roles/r1/job_description.md") == "Job description" and f("roles/r1/cv.md") == "CV for this role" and f("roles/r1/intent.md") == "My intent"
     assert f("library/notes.md") == "notes.md"
+
+
+def test_leftover_files_from_earlier_versions_are_listed_hidden_and_deletable():
+    d = candidate.profile_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    for n in ("profile.md", "facts.md", "facts.json", "about_original.json"):
+        (d / n).write_text("x")
+    (d / "cv.md").write_text("# CV")
+    assert sorted(p.name for p in candidate.legacy_files()) == ["about_original.json", "facts.json", "facts.md", "profile.md"]
+    assert not candidate.visible("profile/profile.md", None) and not candidate.visible("profile/facts.md", None)
+    assert candidate.visible("profile/cv.md", None) and candidate.visible("profile/about.md", None)
+    assert candidate.delete_legacy_files() == 4 and candidate.legacy_files() == [] and (d / "cv.md").exists()
+
+
+def _index_for(monkeypatch, cfg):
+    import index as index_mod
+    from index import Index
+    monkeypatch.setattr(index_mod, "StEmbedder", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("keyword index only")))
+    monkeypatch.setattr(settings, "INDEX_DIR", settings.TOOL_DIR / ".test_scratch" / "index")
+    c = dict(cfg)
+    c["docs"] = [{"name": "Profile", "path": str(candidate.workspace() / "profile"), "exts": [".pdf", ".md", ".txt"]}]
+    c["projects"] = []
+    return Index.build(c)
+
+
+def test_the_index_report_counts_the_cv_and_about_you_from_the_real_index(cfg, monkeypatch):
+    cv = "\n\n".join(f"## Job {i}\nI did work number {i} with scanners, pipelines and careful validation of results {i * 7}." for i in range(60))
+    candidate.save_cv("cv.md", cv.encode())
+    candidate.save_about("I moved into imaging because I like messy data. " * 40)
+    rows = {r["name"]: r for r in candidate.index_report(_index_for(monkeypatch, cfg))}
+    assert rows["CV"]["pieces"] > 3 and rows["CV"]["covered"] >= 0.98 and rows["CV"]["notes"] == [] and rows["CV"]["chars"] > 4000
+    assert rows["About you"]["pieces"] >= 1 and rows["About you"]["covered"] >= 0.98
+
+
+def test_the_index_report_warns_about_a_scanned_pdf_a_file_not_yet_indexed_and_hidden_secrets(cfg, monkeypatch):
+    import io
+    from pypdf import PdfWriter
+    w = PdfWriter()
+    w.add_blank_page(width=200, height=200)
+    buf = io.BytesIO()
+    w.write(buf)
+    candidate.save_about("Some text about me so the index is not empty. " * 5)
+    candidate.save_cv("scan.pdf", buf.getvalue())
+    idx = _index_for(monkeypatch, cfg)
+    rows = {r["name"]: r for r in candidate.index_report(idx)}
+    assert any("scanned PDF" in n for n in rows["CV"]["notes"])
+    candidate.save_cv("cv.md", b"# CV\npassword = \"hunter2hunter2\"\nI built things.")
+    rows = {r["name"]: r for r in candidate.index_report(idx)}                       # the index was built before this CV existed
+    assert any("not in the search index yet" in n for n in rows["CV"]["notes"]) and any("look like a password" in n for n in rows["CV"]["notes"])
+    assert [r for r in candidate.index_report(idx) if r["name"] == "CV"][0]["pieces"] == 0

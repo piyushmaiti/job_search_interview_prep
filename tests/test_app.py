@@ -267,19 +267,49 @@ def test_first_run_opens_on_the_profile_page_and_asks_for_a_cv(monkeypatch):
     assert not at.exception, at.exception
     assert at.session_state["view"] == "__profile__"
     assert any("Your profile" in m.value for m in at.markdown)
-    assert at.button(key="profile-build").disabled, "building needs a CV"
+    assert at.button(key="cv-save").disabled, "saving needs a file"
     assert not any("Conversation" in m.value for m in at.markdown), "the research screen is not shown before there is a profile"
 
 
-def test_profile_page_builds_and_shows_the_profile():
+def test_profile_page_shows_what_is_indexed_for_the_cv_and_about_you():
     import candidate
+    candidate.save_about("I moved into imaging because I like messy data. " * 30)
     at = run_app(view="__profile__")
     assert not at.exception, at.exception
-    assert not at.button(key="profile-build").disabled
-    at.button(key="profile-build").click().run()
+    text = " ".join(m.value for m in at.markdown)
+    assert "What is indexed" in text and "**CV** (cv.md)" in text and "**About you** (about.md)" in text
+    assert "index piece" in text and "100% of the text found there" in text
+    assert not any("Build my profile" in b.label for b in at.button), "there is no profile builder"
+
+
+def test_leftover_files_are_asked_about_at_the_end_and_deleted_only_when_the_user_says_yes():
+    import candidate
+    old = candidate.profile_dir()
+    (old / "profile.md").write_text("# Profile: old\n\n## Experience\nsomething")
+    (old / "facts.json").write_text("{}")
+    at = run_app(view="__profile__")
     assert not at.exception, at.exception
-    assert candidate.profile_status()["built"], ([e.value for e in at.error], at.session_state["flash"] if "flash" in at.session_state else None)
-    assert any("A demo profile built offline" in t.value for t in at.text_area)
+    q = [w for w in at.warning if "Files left by earlier versions" in w.value]
+    assert q and "profile.md" in q[0].value and "facts.json" in q[0].value and "Can the tool delete them for you?" in q[0].value
+    heads = [m.value for m in at.markdown if m.value.startswith("###")]
+    assert heads.index("### Leftover files") > heads.index("### 4. What is indexed"), "the question comes last on the page"
+    assert (old / "profile.md").exists(), "nothing is deleted without a yes"
+    at.button(key="legacy-del").click().run()
+    assert not (old / "profile.md").exists() and not (old / "facts.json").exists() and (old / "cv.md").exists()
+    assert not [w for w in at.warning if "Files left by earlier versions" in w.value]
+
+
+def test_saying_no_keeps_the_leftover_files_hidden_and_does_not_ask_again():
+    import candidate
+    old = candidate.profile_dir()
+    (old / "profile.md").write_text("# Profile: old\n\n## Experience\nsomething")
+    at = run_app(view="__profile__")
+    at.button(key="legacy-keep").click().run()
+    assert (old / "profile.md").exists()
+    assert not [w for w in at.warning if "Files left by earlier versions" in w.value]
+    at = run_app(view="__profile__")
+    assert not [w for w in at.warning if "Files left by earlier versions" in w.value], "it does not ask again in a new session"
+    assert not candidate.visible("profile/profile.md", None)
 
 
 def test_new_role_page_explains_what_is_missing():
@@ -402,62 +432,3 @@ def test_the_deep_read_dialog_offers_claude_and_ollama_with_no_default_and_nothi
     assert radio.value is None and sorted(o.split(" ")[0] for o in radio.options) == ["claude", "ollama"]
     assert any(b.label == "Build" and b.disabled for b in at.button), "Build stays off until a provider is chosen"
     assert knowledge.load("ollama_code") is None and not deepread.has_cache("ollama_code")
-
-
-# ---------------------------------------------------------------- structured extraction on the Profile page
-NURSE_CV = (b"# Sam Lee\n\nStaff nurse on the cardiac ward at Example Hospital, 2019 to 2023.\n"
-            b"Trained twelve new nurses on the ward handover process.\nI want to move into nurse education.\n")
-
-
-def test_saving_a_cv_reads_it_and_lists_items_for_review_without_using_them_yet():
-    import extract
-    at = run_app(view="__profile__")
-    assert not at.exception, at.exception
-    at.file_uploader(key="cv_up_0").set_value(("cv.md", NURSE_CV, "text/markdown")).run()
-    next(b for b in at.button if b.label in ("Replace CV", "Save CV")).click().run()
-    assert not at.exception, at.exception
-    data = extract.load()
-    pending = [i for i in data["items"] if i["status"] == "pending"]
-    assert pending and all(i["evidence"] for i in pending)
-    assert any(i["status"] == "unmatched" for i in data["items"]), "the invented item was set aside"
-    assert candidate.read_facts() == "", "nothing is used before it is accepted"
-    assert any("Review what was found" in m.value for m in at.markdown)
-    assert any("Set aside" in e.label for e in at.expander)
-
-
-def test_accepting_items_in_the_review_form_makes_them_available_to_the_prep_tools():
-    import extract
-    from providers.fake import FakeProvider
-    candidate.save_cv("cv.md", NURSE_CV)
-    ok, _ = extract.extract_source(FakeProvider(), "CV", NURSE_CV.decode())
-    assert ok
-    at = run_app(view="__profile__")
-    pending = [i for i in extract.load()["items"] if i["status"] == "pending"]
-    for it in pending:
-        at.radio(key=f"rv_dec_{it['id']}").set_value("Accept")
-    next(b for b in at.button if b.label == "Apply decisions").click().run()
-    assert not at.exception, at.exception
-    assert all(i["status"] == "accepted" for i in extract.load()["items"] if i["verified"])
-    assert "Reviewed facts" in candidate.read_facts()
-
-
-def test_review_sections_can_be_decided_as_a_group_and_an_item_overrides_its_group():
-    import extract
-    from tests.test_extract import DOC, ITEMS, stored
-    candidate.save_cv("cv.md", DOC.encode())
-    stored(text=DOC, items=ITEMS)
-    at = run_app(view="__profile__")
-    assert not at.exception, at.exception
-    labels = [e.label for e in at.expander]
-    assert any(l.startswith("Research assistant at Example Lab (2020 to 2022), 3 items") for l in labels)
-    assert "Papers and articles (2)" in labels and "Talks and presentations (1)" in labels
-    at.radio(key="rv_grp_sec:Papers and articles").set_value("Accept all")
-    b1 = next(i for i in extract.load()["items"] if i["text"] == "More on scanners")
-    at.radio(key=f"rv_dec_{b1['id']}").set_value("Remove")
-    at.radio(key="rv_grp_sec:Skills").set_value("Remove all")
-    next(b for b in at.button if b.label == "Apply decisions").click().run()
-    assert not at.exception, at.exception
-    status = {i["text"]: i["status"] for i in extract.load()["items"]}
-    assert status["A study of scanners"] == "accepted" and "More on scanners" not in status
-    assert "Programming: Python, MATLAB" not in status
-    assert status["Scanners in practice"] == "pending", "a group left on 'Decide later' stays waiting"
