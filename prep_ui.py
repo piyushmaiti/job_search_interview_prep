@@ -325,7 +325,7 @@ def prep_page(role: candidate.Role, complete) -> None:
     import prep
     with st.container(key="page_prep"):
         tools = prep.tools_for(role.kind)
-        st.caption("Each tool reads your profile, your CV for this role, your intent and the job description. "
+        st.caption("Each tool reads your CV/Resume for this role, and About you, your intent and the job description, all in full. "
                    "It only uses what is in them; anything it cannot find is marked GAP for you to fill in.")
         miss = prep.missing_inputs(role)
         if miss:
