@@ -52,9 +52,9 @@ Planned, not built yet: voice for the mock interview.
 
 ## 🧭 How it is organised
 
-1. **Profile** (the first tab): upload your CV (PDF, Word, Markdown or text), write a short "about you" and add publications. Everything is used exactly as you give it. Saving a file indexes it and sends nothing anywhere. **What is indexed** then shows, counted from the real index, how many characters of your CV and About you were indexed and how much of the text is in the index. All roles share this profile.
+1. **Profile** (the first tab): upload your CV (PDF, Word, Markdown or text), write a short "about you" and add publications. Everything is used exactly as you give it. Saving a file indexes it and sends nothing anywhere. **What is indexed** then shows, counted from the real index, how many characters of your CV and About you were indexed and how much of the text is in the index. All roles share this profile. If files from earlier versions of the tool (such as a profile written by the old Build my profile button) are still in your workspace, the Profile page asks at the end whether the tool may delete them. They are hidden and unused either way.
 2. **A tab per role** (**+ New role**): the title, the company, whether it is an **Industry** or **Academic** role, the pasted job description (saved as a Markdown file), your intent, and the CV for this role (or your main one).
-3. Inside a role, pick **Research**, **Prep tools** or **Mock interview**. Each role keeps its own chats, results and interviews. Prep tools and the mock interview use Claude through your Claude Code login (the `claude` command) and need a built profile or CV and a job description.
+3. Inside a role, pick **Research**, **Prep tools** or **Mock interview**. Each role keeps its own chats, results and interviews. Prep tools and the mock interview use Claude through your Claude Code login (the `claude` command) and need your CV and a job description. They receive your whole CV and About you, with no limit short of 150,000 characters each.
 
 Your private files live in `workspace/` (git-ignored): `workspace/profile/` (your CV, About you and papers), `workspace/roles/<role>/` and `workspace/prep/<role>/`. Prep results and mock interviews are saved there as Markdown, and are not searched by Research. Deleting a role deletes them.
 
@@ -190,7 +190,7 @@ With both lists empty (the default) nothing is pinned. When a rule matches, the 
 
 **Add a code project from the app.** In a role's Research tab, open **Sources**, then **Add a code project**. Type the folder of the project (for example `~/code/my_project`), optionally give it a name, press **Check folder** to see how many files would be read, then **Add and re-index**. The folder is only read, never changed, and nothing is sent anywhere when you add it. When it is added, the **deep read** opens by default (see Project knowledge below) and asks which provider may read the code; press Cancel to skip it. A small bin icon next to a project takes it off the list again, and your code is not touched. The button is hidden while the app is open to other devices (`--lan`), because the folder is read on the computer that runs the tool. These folders are refused: your home folder, a whole drive, folders that hold keys or credentials, `patient-data` folders, and this tool's own folder.
 
-**By hand.** The app saves projects in `config.local.yaml` (ignored by git), which is laid over `config.yaml`. You can edit that file yourself. Lists are replaced, not merged. If you add a `docs:` list, repeat the Profile and Roles entries or your profile and roles stop being searched:
+**By hand.** The app saves projects in `config.local.yaml` (ignored by git), which is laid over `config.yaml`. You can edit that file yourself. Lists are replaced, not merged. If you add a `docs:` list, repeat the Profile and Roles entries or your CV, About you and roles stop being searched:
 
 ```yaml
 docs:
