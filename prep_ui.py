@@ -92,17 +92,24 @@ def profile_page(rebuild_index, index) -> None:
         _profile_page(rebuild_index, index)
 
 
-def _legacy_notice(rebuild_index) -> None:
-    """Files that earlier versions wrote into the profile folder. They are hidden and unused; deleting them is the person's choice."""
-    files = candidate.legacy_files()
+def _legacy_question(rebuild_index) -> None:
+    """Files that earlier versions wrote into the profile folder are hidden and unused. The tool asks whether it may delete them."""
+    files = candidate.legacy_to_ask_about()
     if not files:
         return
-    st.warning("Files left by earlier versions of this tool are in your workspace: " + ", ".join(p.name for p in files) +
-               ". The tool no longer uses them and hides them from your sources. You can delete them.")
-    if st.button("Delete these files", key="legacy-del"):
+    st.markdown("### Leftover files")
+    st.warning("Files left by earlier versions of this tool were found in your workspace: " + ", ".join(p.name for p in files) +
+               ". The tool no longer uses them and hides them from your sources. Can the tool delete them for you? "
+               "Only these files are deleted. Your CV, About you and papers are not touched.")
+    c1, c2 = st.columns(2)
+    if c1.button("Yes, delete them", key="legacy-del", use_container_width=True):
         n = candidate.delete_legacy_files()
         rebuild_index()
-        S.flash = (True, f"Deleted {n} files.")
+        S.flash = (True, f"Deleted {n} file{'s' if n != 1 else ''}.")
+        st.rerun()
+    if c2.button("No, keep them", key="legacy-keep", use_container_width=True):
+        candidate.keep_legacy_files()
+        S.flash = (True, "Kept. They stay hidden and are not asked about again.")
         st.rerun()
 
 
@@ -131,7 +138,6 @@ def _profile_page(rebuild_index, index) -> None:
                "Everything is used exactly as you give it: nothing is rewritten, summarised or tidied. Your files stay in the workspace folder "
                "on this computer. They are sent to Claude only inside your questions and the prep tools.")
     flash()
-    _legacy_notice(rebuild_index)
 
     st.markdown("### 1. Resume or CV")
     cv = candidate.cv_path()
@@ -203,6 +209,7 @@ def _profile_page(rebuild_index, index) -> None:
         st.rerun()
 
     _index_status(index)
+    _legacy_question(rebuild_index)
     st.caption("Next: add a role with + New role at the top.")
 
 

@@ -282,18 +282,34 @@ def test_profile_page_shows_what_is_indexed_for_the_cv_and_about_you():
     assert not any("Build my profile" in b.label for b in at.button), "there is no profile builder"
 
 
-def test_leftover_files_from_earlier_versions_are_hidden_and_deleted_only_when_the_user_asks():
+def test_leftover_files_are_asked_about_at_the_end_and_deleted_only_when_the_user_says_yes():
     import candidate
     old = candidate.profile_dir()
     (old / "profile.md").write_text("# Profile: old\n\n## Experience\nsomething")
     (old / "facts.json").write_text("{}")
     at = run_app(view="__profile__")
     assert not at.exception, at.exception
-    assert any("Files left by earlier versions" in w.value and "profile.md" in w.value and "facts.json" in w.value for w in at.warning)
-    assert (old / "profile.md").exists(), "nothing is deleted without a click"
+    q = [w for w in at.warning if "Files left by earlier versions" in w.value]
+    assert q and "profile.md" in q[0].value and "facts.json" in q[0].value and "Can the tool delete them for you?" in q[0].value
+    heads = [m.value for m in at.markdown if m.value.startswith("###")]
+    assert heads.index("### Leftover files") > heads.index("### 4. What is indexed"), "the question comes last on the page"
+    assert (old / "profile.md").exists(), "nothing is deleted without a yes"
     at.button(key="legacy-del").click().run()
-    assert not (old / "profile.md").exists() and not (old / "facts.json").exists()
-    assert (old / "cv.md").exists(), "the CV is not touched"
+    assert not (old / "profile.md").exists() and not (old / "facts.json").exists() and (old / "cv.md").exists()
+    assert not [w for w in at.warning if "Files left by earlier versions" in w.value]
+
+
+def test_saying_no_keeps_the_leftover_files_hidden_and_does_not_ask_again():
+    import candidate
+    old = candidate.profile_dir()
+    (old / "profile.md").write_text("# Profile: old\n\n## Experience\nsomething")
+    at = run_app(view="__profile__")
+    at.button(key="legacy-keep").click().run()
+    assert (old / "profile.md").exists()
+    assert not [w for w in at.warning if "Files left by earlier versions" in w.value]
+    at = run_app(view="__profile__")
+    assert not [w for w in at.warning if "Files left by earlier versions" in w.value], "it does not ask again in a new session"
+    assert not candidate.visible("profile/profile.md", None)
 
 
 def test_new_role_page_explains_what_is_missing():

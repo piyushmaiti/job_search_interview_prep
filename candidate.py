@@ -317,11 +317,34 @@ def legacy_files() -> list[Path]:
     return [p for p in (profile_dir() / n for n in LEGACY_FILES) if p.is_file()]
 
 
+def _kept_path() -> Path:
+    return workspace() / ".legacy_kept.json"
+
+
+def _kept() -> set[str]:
+    try:
+        return set(json.loads(_kept_path().read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        return set()
+
+
+def legacy_to_ask_about() -> list[Path]:
+    """Leftover files the person has not yet decided about (kept files are not asked about again)."""
+    kept = _kept()
+    return [p for p in legacy_files() if p.name not in kept]
+
+
+def keep_legacy_files() -> None:
+    """The person said no: leave the files on disk, hidden, and do not ask again."""
+    _write(_kept_path(), json.dumps(sorted(p.name for p in legacy_files())))
+
+
 def delete_legacy_files() -> int:
     n = 0
     for p in legacy_files():
         settings.assert_writable(p).unlink(missing_ok=True)
         n += 1
+    settings.assert_writable(_kept_path()).unlink(missing_ok=True)
     return n
 
 
