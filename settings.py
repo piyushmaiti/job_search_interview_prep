@@ -61,7 +61,7 @@ def setup_env() -> None:
     load_dotenv()
 
 
-KEY_NAMES = {"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "INTERVIEW_PREP_PASSCODE"}
+KEY_NAMES = {"ANTHROPIC_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "OPENAI_API_KEY", "INTERVIEW_PREP_PASSCODE"}
 
 
 def load_dotenv(path: Path | None = None) -> None:

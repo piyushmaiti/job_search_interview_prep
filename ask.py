@@ -5,7 +5,7 @@
   python ask.py --chat                           conversation with memory (saved in sessions/)
   python ask.py --reindex                        rebuild the index
   python ask.py --status                         show index and provider status
-Options: --model auto|claude|gemini|ollama|compare   --claude-model ID   --gemini-model ID   --ollama-model NAME
+Options: --model auto|claude|gemini|openai|ollama|compare   --claude-model ID   --gemini-model ID   --openai-model ID   --ollama-model NAME
          --no-web   --no-memory   --sources "Library"   --resume SESSION_ID   --demo
 """
 from __future__ import annotations
@@ -73,14 +73,14 @@ def main(argv=None) -> int:
     ap.add_argument("--chat", action="store_true")
     ap.add_argument("--reindex", action="store_true")
     ap.add_argument("--status", action="store_true")
-    ap.add_argument("--model", default=None, choices=["auto", "claude", "gemini", "ollama", "compare"])
+    ap.add_argument("--model", default=None, choices=["auto", "claude", "gemini", "openai", "ollama", "compare"])
     ap.add_argument("--claude-access", choices=["auto", "login", "api"], help="auto = login, API key only for web search; login = claude -p only; api = API key only")
-    ap.add_argument("--claude-model"); ap.add_argument("--gemini-model"); ap.add_argument("--ollama-model")
+    ap.add_argument("--claude-model"); ap.add_argument("--gemini-model"); ap.add_argument("--openai-model"); ap.add_argument("--ollama-model")
     ap.add_argument("--no-web", action="store_true"); ap.add_argument("--no-memory", action="store_true")
     ap.add_argument("--sources", help="comma-separated source names from config.yaml, for example: Library,my_project")
     ap.add_argument("--code-mode", choices=["retrieve", "whole", "explore"], default="retrieve",
                     help="retrieve = best-matching pieces (default); whole = every readable file of the selected projects in one request; explore = Claude opens files itself in a read-only copy (Claude login only)")
-    ap.add_argument("--knowledge-provider", choices=["claude", "ollama"], default="claude", help="who reads the project for --build-knowledge or --update-knowledge (default claude)")
+    ap.add_argument("--knowledge-provider", choices=["claude", "openai", "ollama"], default="claude", help="who reads the project for --build-knowledge or --update-knowledge (default claude)")
     ap.add_argument("--build-knowledge", metavar="PROJECT", help="Claude reads the whole project once and writes a lasting knowledge document (asks first)")
     ap.add_argument("--update-knowledge", metavar="PROJECT", help="update the knowledge document from the files that changed (asks first)")
     ap.add_argument("--knowledge-status", action="store_true", help="show which projects have knowledge built, and whether it is current")
@@ -94,9 +94,9 @@ def main(argv=None) -> int:
     if a.demo:
         from providers.fake import FakeProvider
         providers = {"claude": FakeProvider(label="claude", locality="cloud"), "gemini": FakeProvider(label="gemini", locality="cloud"),
-                     "ollama": FakeProvider(label="ollama", locality="local")}
+                     "ollama": FakeProvider(label="ollama", locality="local"), "openai": FakeProvider(label="openai", locality="cloud")}
     else:
-        providers = build_providers(cfg, {"claude": a.claude_model, "claude_access": a.claude_access, "gemini": a.gemini_model, "ollama": a.ollama_model})
+        providers = build_providers(cfg, {"claude": a.claude_model, "claude_access": a.claude_access, "gemini": a.gemini_model, "ollama": a.ollama_model, "openai": a.openai_model})
     eng = Engine(cfg, index, providers)
 
     if a.build_knowledge or a.update_knowledge:

@@ -36,6 +36,7 @@ from providers.claude import CLAUDE_MODELS             # noqa: E402
 from providers.fake import FakeProvider                # noqa: E402
 from providers.gemini import GEMINI_MODELS             # noqa: E402
 from providers.ollama import installed_models          # noqa: E402
+from providers.openai_provider import OPENAI_MODELS    # noqa: E402
 from sessions import Session, TurnRecord               # noqa: E402
 
 st.set_page_config(page_title="Interview Prep Tool", page_icon=None, layout="wide")
@@ -62,6 +63,7 @@ GEMINI_GRADIENT = ('<defs><linearGradient id="g" x1="0" y1="1" x2="1" y2="0"><st
 LINE_ICONS = {
     "auto": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h5l5-6h6M13 18h6M8 12l5 6M17 3l3 3-3 3M16 15l3 3-3 3"/></svg>',
     "compare": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8"><circle cx="9" cy="12" r="6"/><circle cx="15" cy="12" r="6"/></svg>',
+    "openai": '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="black" stroke-width="1.8" stroke-linejoin="round"><path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z"/><circle cx="12" cy="12" r="3"/></svg>',
 }
 
 
@@ -78,7 +80,7 @@ def icon_css() -> str:
         except OSError:
             return None
     claude, gem, oll = read("claude"), read("googlegemini"), read("ollama")
-    names = ["Auto", "Claude", "Gemini", "Compare both", "Ollama"]
+    names = ["Auto", "Claude", "Gemini", "Compare two", "Ollama", "OpenAI"]
     mask = lambda svg: f'background:var(--fg); -webkit-mask:url({_uri(svg)}) center/contain no-repeat; mask:url({_uri(svg)}) center/contain no-repeat;'
     pic = lambda svg: f'background:url({_uri(svg)}) center/contain no-repeat;'
     marks = {
@@ -87,6 +89,7 @@ def icon_css() -> str:
         3: mask(LINE_ICONS["compare"]),
         0: mask(LINE_ICONS["auto"]),
         4: mask(oll) if oll else None,
+        5: mask(LINE_ICONS["openai"]),
     }
     out = [
         '.st-key-mode, .st-key-mode > div { width:100%; } .st-key-mode { padding-top:6px; }',
@@ -328,9 +331,9 @@ def rebuild_index():
 def make_engine(cfg, index) -> Engine:
     if S.get("demo"):
         provs = {"claude": FakeProvider(label="claude", locality="cloud"), "gemini": FakeProvider(label="gemini", locality="cloud"),
-                 "ollama": FakeProvider(label="ollama", locality="local")}
+                 "ollama": FakeProvider(label="ollama", locality="local"), "openai": FakeProvider(label="openai", locality="cloud")}
     else:
-        provs = build_providers(cfg, {"claude": S.get("claude_model"), "claude_access": S.get("claude_access"), "gemini": S.get("gemini_model"), "ollama": S.get("ollama_model")})
+        provs = build_providers(cfg, {"claude": S.get("claude_model"), "claude_access": S.get("claude_access"), "gemini": S.get("gemini_model"), "ollama": S.get("ollama_model"), "openai": S.get("openai_model")})
     return Engine(cfg, index, provs)
 
 
@@ -524,9 +527,9 @@ def knowledge_dialog(name: str, update: bool):
                "The document stays on this machine (knowledge/) and is never committed. Every file and line it cites is checked against the code.")
     pick = st.radio("Which provider may read the code?", [o.key for o in avail], index=None, format_func=labels.get, key="kb_provider",
                     help="Claude reads it through your Claude Code login and gives the best result. An Ollama model reads it on this machine "
-                         "(unless it is a :cloud model), slower and less reliably. Gemini cannot do this.")
+                         "(unless it is a :cloud model), slower and less reliably. OpenAI reads it with your API key, billed per use. Gemini cannot do this.")
     if not avail:
-        st.error("Neither Claude (through your login) nor Ollama is available. Install and log in to Claude Code, or start Ollama with a model.")
+        st.error("Claude (through your login), OpenAI (OPENAI_API_KEY) and Ollama are all unavailable. Install and log in to Claude Code, set an OpenAI key in .env, or start Ollama with a model.")
     if pick:
         req, send = eng.knowledge_request(name, update, pick)
         st.info(req.detail)
@@ -658,11 +661,14 @@ if S.get("active_role") != ROLE or "session" not in S:       # each role has its
     S.session, S.views, S.pending, S.consent_answer, S.evidence = Session(role=ROLE), [], None, None, None
 prep_ui.role_details(role, rebuild_index)
 mode = prep_ui.mode_bar(role)
+_oa = eng.providers.get("openai")
+writers = {"claude": _claude_login(eng.providers.get("claude")),               # the models that can write drafts and feedback
+           "openai": _oa if (_oa is not None and _oa.available()[0]) else None}
 if mode == "Prep tools":
-    prep_ui.prep_page(role, _claude_login(eng.providers.get("claude")))
+    prep_ui.prep_page(role, writers)
     st.stop()
 if mode == "Mock interview":
-    prep_ui.mock_page(role, _claude_login(eng.providers.get("claude")))
+    prep_ui.mock_page(role, writers)
     st.stop()
 
 left, mid, right = st.columns([1.05, 2.5, 1.25], gap="medium")
@@ -883,6 +889,8 @@ with left:
                          format_func=ACCESS.get, key="claude_access")
             st.selectbox("Claude model", CLAUDE_MODELS, index=CLAUDE_MODELS.index(cfg["models"]["claude"]) if cfg["models"]["claude"] in CLAUDE_MODELS else 0, key="claude_model")
             st.selectbox("Gemini model", GEMINI_MODELS, index=GEMINI_MODELS.index(cfg["models"]["gemini"]) if cfg["models"]["gemini"] in GEMINI_MODELS else 0, key="gemini_model")
+            st.selectbox("OpenAI model", OPENAI_MODELS, index=OPENAI_MODELS.index(cfg["models"].get("openai")) if cfg["models"].get("openai") in OPENAI_MODELS else 0, key="openai_model",
+                         help="Needs OPENAI_API_KEY in .env. Billed per use by OpenAI. Auto never picks it; choose OpenAI in the model switch.")
             st.selectbox("Ollama model", installed_models() or ["(none installed)"], key="ollama_model")
             st.checkbox("Use offline demo models (no keys, no network; answers are placeholders)", value=False, key="demo")
             for k, p in eng.providers.items():
@@ -907,7 +915,7 @@ with mid:
             with st.container(key="convbar"):          # stays in view while a long chat scrolls
                 h1, h2, h3, h4 = st.columns([1.1, 2.4, 1.5, 1.3], vertical_alignment="center")
                 h1.markdown("### Conversation")
-                mode = h2.radio("Model", ["auto", "claude", "gemini", "compare", "ollama"], horizontal=True,
+                mode = h2.radio("Model", ["auto", "claude", "gemini", "compare", "ollama", "openai"], horizontal=True,
                                 label_visibility="collapsed", key="mode")
                 web = h3.toggle("Web search", value=S.get("web_on", cfg["web"]["default"]), key="web_w")
                 memory = h4.toggle("Memory", value=S.get("memory_on", cfg["chat"]["memory"]), key="memory_w")

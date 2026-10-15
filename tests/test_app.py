@@ -418,7 +418,7 @@ def extract_free_knowledge(name):
     return knowledge.load(name)
 
 
-def test_the_deep_read_dialog_offers_claude_and_ollama_with_no_default_and_nothing_is_read_yet(tmp_path):
+def test_the_deep_read_dialog_offers_claude_ollama_and_openai_with_no_default_and_nothing_is_read_yet(tmp_path):
     import deepread
     import knowledge
     d = tmp_path / "ollama_code"
@@ -429,6 +429,44 @@ def test_the_deep_read_dialog_offers_claude_and_ollama_with_no_default_and_nothi
     next(b for b in at.button if b.label == "Add and re-index").click().run()
     assert not at.exception, at.exception
     radio = at.radio(key="kb_provider")
-    assert radio.value is None and sorted(o.split(" ")[0] for o in radio.options) == ["claude", "ollama"]
+    assert radio.value is None and sorted(o.split(" ")[0] for o in radio.options) == ["claude", "ollama", "openai"]
     assert any(b.label == "Build" and b.disabled for b in at.button), "Build stays off until a provider is chosen"
     assert knowledge.load("ollama_code") is None and not deepread.has_cache("ollama_code")
+
+
+# ---------------------------------------------------------------- OpenAI in the app
+def test_the_model_switch_has_openai_and_settings_lists_its_models():
+    at = run_app()
+    assert not at.exception, at.exception
+    assert at.radio(key="mode").options == ["auto", "claude", "gemini", "compare", "ollama", "openai"]
+    assert any(s.label == "OpenAI model" for s in at.selectbox)
+    assert any(c.value.startswith("**openai**") for c in at.caption), "its status line is shown"
+
+
+def test_openai_writes_prep_drafts_only_after_a_yes_each_time_and_claude_needs_none():
+    import prep
+    at = run_app()
+    at.session_state[f"mode_{ROLE_SLUG}"] = "Prep tools"
+    at.run()
+    assert not at.exception, at.exception
+    writer = at.radio(key=f"writer_prep_{ROLE_SLUG}")
+    assert writer.value == "claude" and not next(b for b in at.button if b.label == "Write it").disabled
+    writer.set_value("openai").run()
+    assert next(b for b in at.button if b.label == "Write it").disabled, "OpenAI needs the user's yes first"
+    at.checkbox(key=f"openai_ok_prep_{ROLE_SLUG}_0").check().run()
+    next(b for b in at.button if b.label == "Write it").click().run()
+    assert not at.exception, at.exception
+    assert prep.load(candidate.get_role(ROLE_SLUG), "gap")
+    assert at.checkbox(key=f"openai_ok_prep_{ROLE_SLUG}_1").value is False, "the yes is asked for again next time"
+
+
+def test_the_mock_interview_with_openai_needs_a_yes_to_start():
+    at = run_app()
+    at.session_state[f"mode_{ROLE_SLUG}"] = "Mock interview"
+    at.run()
+    at.radio(key=f"writer_mock_{ROLE_SLUG}").set_value("openai").run()
+    assert next(b for b in at.button if b.label == "Start").disabled
+    at.checkbox(key=f"openai_ok_mock_{ROLE_SLUG}_0").check().run()
+    next(b for b in at.button if b.label == "Start").click().run()
+    assert not at.exception, at.exception
+    assert at.session_state[f"mockstate_{ROLE_SLUG}"]["writer"] == "openai"

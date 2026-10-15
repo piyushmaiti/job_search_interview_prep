@@ -29,20 +29,31 @@ def is_whole_doc_request(q: str) -> bool:
     return bool(WHOLE_RE.search(q))
 
 
+COMPARE_ORDER = ("claude", "gemini", "openai")
+
+
+def compare_pair(available: set[str]) -> list[str]:
+    """The two models Compare runs: Claude and Gemini when both are ready, otherwise the first two ready ones (OpenAI can stand in)."""
+    ps = [p for p in COMPARE_ORDER if p in available][:2]
+    if len(ps) < 2:
+        raise ValueError("Compare needs two cloud models (Claude, Gemini, OpenAI); only "
+                         + (", ".join(p for p in COMPARE_ORDER if p in available) or "none") + " is ready")
+    return ps
+
+
 def decide_whole(mode: str, available: set[str], tokens: int, caps: dict[str, int]) -> Route:
     """Route a whole-project question. Auto prefers Claude (your login, no API bill) while the project fits its limit,
-    and otherwise Gemini's larger context. A manual choice always wins. Ollama's context is too small."""
+    and otherwise Gemini's larger context. Auto never picks OpenAI: choose it by name. A manual choice always wins.
+    Ollama's context is too small."""
     cloud = available - {"ollama"}
     if mode == "ollama":
-        raise ValueError("Ollama's context is too small to hold a whole project. Choose Claude or Gemini.")
-    if mode in ("claude", "gemini"):
+        raise ValueError("Ollama's context is too small to hold a whole project. Choose Claude, Gemini or OpenAI.")
+    if mode in ("claude", "gemini", "openai"):
         if mode not in available:
             raise ValueError(f"{mode} is not available")
         return Route([mode], f"you chose {mode}: whole project (about {tokens:,} tokens)")
     if mode == "compare":
-        ps = [p for p in ("claude", "gemini") if p in available]
-        if len(ps) < 2:
-            raise ValueError("Compare needs both Claude and Gemini")
+        ps = compare_pair(available)
         return Route(ps, f"compare mode: both models read the whole project (about {tokens:,} tokens)")
     if "claude" in cloud and tokens <= caps.get("claude", 0):
         return Route(["claude"], f"whole project (about {tokens:,} tokens) fits Claude's limit")
@@ -60,13 +71,9 @@ def decide(question: str, mode: str, available: set[str], locality: dict[str, st
     whole = is_whole_doc_request(question) and not image
 
     if mode == "compare":
-        ps = [p for p in ("claude", "gemini") if p in available]
-        if len(ps) < 2:
-            missing = [p for p in ("claude", "gemini") if p not in available]
-            raise ValueError(f"Compare needs both Claude and Gemini; missing: {', '.join(missing)}")
-        return Route(ps, "compare mode: both models answer the same context", image=False, whole_docs=whole)
+        return Route(compare_pair(available), "compare mode: both models answer the same context", image=False, whole_docs=whole)
 
-    if mode in ("claude", "gemini", "ollama"):
+    if mode in ("claude", "gemini", "openai", "ollama"):
         if mode not in available:
             raise ValueError(f"{mode} is not available")
         note = ""
@@ -88,4 +95,6 @@ def decide(question: str, mode: str, available: set[str], locality: dict[str, st
     if "ollama" in available and loc.get("ollama", "local") == "local":
         return Route(["ollama"], "only a local model is available")
     hint = " Ollama's installed model runs in the cloud, so it is not used automatically; choose it by name, or `ollama pull` a local one." if "ollama" in available else ""
+    if "openai" in available:
+        hint += " OpenAI is ready, but Auto never picks it; choose OpenAI by name."
     raise ValueError("No model is ready. Set ANTHROPIC_API_KEY or GEMINI_API_KEY." + hint)

@@ -1,6 +1,7 @@
 models:
   claude: claude-opus-5-5
   gemini: gemini-3.8-flash          # text + Google Search grounding; confirm against Google's current docs
+  openai: gpt-6.1-sol               # needs OPENAI_API_KEY (billed per use); confirm names against OpenAI's model page
   gemini_image: gemini-nano-banana-2.1   # "Nano Banana"; confirm against Google's current docs
   ollama: null                      # null = first installed non-cloud model
   claude_access: auto   # auto = login for ordinary questions, API key only when web search is on; login = `claude -p` only; api = API key only
@@ -10,7 +11,7 @@ models:
 # One line about how you use the tool, added to the model's instructions. Example: "helping me review the literature on amyloid PET".
 assistant_role: ""                  # leave empty: the tool describes itself (interview preparation). Set a sentence here to replace it.
 
-default_mode: auto                  # auto | claude | gemini | ollama | compare
+default_mode: auto                  # auto | claude | gemini | openai | ollama | compare (auto never picks OpenAI; choose it by name)
 
 retrieval:
   k: 8
@@ -46,7 +47,7 @@ projects: []
 
 # Whole-project questions (the "Whole project" code depth): the largest files are left out when a project is over a model's limit.
 whole_project:
-  max_tokens: {claude: 150000, gemini: 700000}
+  max_tokens: {claude: 150000, gemini: 700000, openai: 400000}
   skip_globs: ["*.tex", "*.log", "*requirements*.txt", "*lock*", "*train_log*"]     # low-value files left out of whole-project questions
 
 # Deep read (project knowledge for a large project): Claude Code reads it in areas, a few at a time, then writes a final overview.
