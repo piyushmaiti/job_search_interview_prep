@@ -4,7 +4,6 @@ from __future__ import annotations
 import streamlit as st
 
 import candidate
-import extract
 import safetext
 
 S = st.session_state
@@ -87,45 +86,52 @@ def view_bar() -> str:
 
 
 # ---------------------------------------------------------------- reading what was uploaded
-def _extract_one(complete, source: str, text: str) -> str:
-    """Read one document with Claude and store what it finds for review. Returns a sentence for the user."""
-    with st.spinner(f"Reading {source} (about a minute)..."):
-        ok, msg = extract.extract_source(complete, source, text)
-    return msg
-
-
-def _all_sources() -> list[tuple[str, str]]:
-    """Every profile document that can be read, as (name for the review, its text)."""
-    out = []
-    cv = candidate.cv_path()
-    if cv:
-        out.append(("CV", candidate.read_text(cv)))
-    about = candidate.read_about()
-    if about.strip():
-        out.append(("About me", about))
-    d = candidate.profile_dir() / "publications"
-    for name in candidate.list_publications():
-        try:
-            out.append((f"Publication: {name}", candidate.read_text(d / name, 6000)))
-        except Exception:
-            pass
-    return out
-
-
 # ---------------------------------------------------------------- profile
-def profile_page(complete, rebuild_index) -> None:
+def profile_page(rebuild_index, index) -> None:
     with st.container(key="page_profile"):
-        _profile_page(complete, rebuild_index)
+        _profile_page(rebuild_index, index)
 
 
-def _profile_page(complete, rebuild_index) -> None:
-    """Upload once; the profile is extracted from it and shared by every role."""
+def _legacy_notice(rebuild_index) -> None:
+    """Files that earlier versions wrote into the profile folder. They are hidden and unused; deleting them is the person's choice."""
+    files = candidate.legacy_files()
+    if not files:
+        return
+    st.warning("Files left by earlier versions of this tool are in your workspace: " + ", ".join(p.name for p in files) +
+               ". The tool no longer uses them and hides them from your sources. You can delete them.")
+    if st.button("Delete these files", key="legacy-del"):
+        n = candidate.delete_legacy_files()
+        rebuild_index()
+        S.flash = (True, f"Deleted {n} files.")
+        st.rerun()
+
+
+def _index_status(index) -> None:
+    """What is really in the search index for the CV and About you, counted from the index itself."""
+    st.markdown("### 4. What is indexed")
+    st.caption("Counted from the real search index, not assumed. Your whole CV and About you also go to the prep tools in full.")
+    rows = candidate.index_report(index)
+    if not rows:
+        st.caption("Nothing to check yet. Save your CV above.")
+        return
+    for r in rows:
+        if r["pieces"]:
+            st.markdown(f"**{r['name']}** ({r['file']}): {r['chars']:,} characters in {r['pieces']} index piece{'s' if r['pieces'] != 1 else ''}, "
+                        f"{r['covered']:.0%} of the text found there.")
+        else:
+            st.markdown(f"**{r['name']}** ({r['file']}): {r['chars']:,} characters, not in the index.")
+        for note in r["notes"]:
+            st.warning(f"{r['name']} {note}")
+
+
+def _profile_page(rebuild_index, index) -> None:
+    """Upload once; everything is used exactly as given and shared by every role."""
     st.markdown("## Your profile")
-    st.caption("One profile for every role. Add your CV, say something about yourself, and add your publications if you have any. "
-               "Your files stay in the workspace folder on this computer. Each time you save one, Claude (through your Claude Code login) reads it "
-               "and lists what it found for you to review below. Names of other people, emails and phone numbers are hidden first, on a best-effort basis.")
+    st.caption("One profile for every role. Add your CV, say something about yourself, and add your papers if you have any. "
+               "Everything is used exactly as you give it: nothing is rewritten, summarised or tidied. Your files stay in the workspace folder "
+               "on this computer. They are sent to Claude only inside your questions and the prep tools.")
     flash()
-    have_cv = candidate.has_profile_cv()
+    _legacy_notice(rebuild_index)
 
     st.markdown("### 1. Resume or CV")
     cv = candidate.cv_path()
@@ -136,17 +142,16 @@ def _profile_page(complete, rebuild_index) -> None:
     if st.button("Replace CV" if cv else "Save CV", key="cv-save", disabled=f is None):
         try:
             candidate.save_cv(f.name, f.getvalue())
-            note = _extract_one(complete, "CV", candidate.read_text(candidate.cv_path()))
             rebuild_index()
             _next_round("cv")
-            S.flash = (True, "CV saved. " + note)
+            S.flash = (True, "CV saved and indexed. Your whole CV is used as it is.")
         except Exception as e:
             S.flash = (False, f"Could not save the CV: {e}")
         st.rerun()
 
     st.markdown("### 2. About you (optional)")
     st.caption("It makes your answers sound like you: your story, why this field, what you want next. "
-               "A statement of purpose works well here.")
+               "A statement of purpose works well here. It is used exactly as you write it.")
     about = st.text_area("About you", value=candidate.read_about(), height=180, key=f"about_{_round('about')}", label_visibility="collapsed",
                          placeholder="Paste or write it here.")
     up = st.file_uploader("or upload a file", type=["pdf", "docx", "md", "txt"], key=f"about_up_{_round('aboutf')}")
@@ -166,182 +171,39 @@ def _profile_page(complete, rebuild_index) -> None:
                 else:
                     text = data.decode("utf-8", errors="replace")
             candidate.save_about(text)
-            if text.strip():
-                note = _extract_one(complete, "About me", text)
-            else:
-                data = extract.load()
-                extract.remove_source(data, "About me")
-                extract.save(data)
-                note = "The items found in it were removed."
             rebuild_index()
             _next_round("about")
             _next_round("aboutf")
-            S.flash = (True, "Saved. " + note)
+            S.flash = (True, "Saved and indexed. Your text is used exactly as you wrote it.")
         except Exception as e:
             S.flash = (False, f"Could not save: {e}")
         st.rerun()
 
     st.markdown("### 3. Publications (optional)")
-    st.caption("Each paper becomes a source you can ask about, and its start helps build your profile.")
+    st.caption("Each paper you add becomes a source you can ask about.")
     for name in candidate.list_publications():
         c1, c2 = st.columns([8, 1], vertical_alignment="center")
         c1.markdown(name)
         if c2.button("", key=f"pub-del-{name}", icon=":material/delete:", type="tertiary", help="Remove this publication"):
             candidate.delete_publication(name)
-            data = extract.load()
-            extract.remove_source(data, f"Publication: {name}")
-            extract.save(data)
             rebuild_index()
             st.rerun()
     pubs = st.file_uploader("Add publications", type=["pdf", "md", "txt"], accept_multiple_files=True, key=f"pub_up_{_round('pub')}",
                             label_visibility="collapsed")
     if st.button("Add publications", key="pub-save", disabled=not pubs):
-        bad, notes = [], []
+        bad = []
         for p in pubs:
             try:
-                path = candidate.save_publication(p.name, p.getvalue())
-                notes.append(_extract_one(complete, f"Publication: {path.name}", candidate.read_text(path, 6000)))
+                candidate.save_publication(p.name, p.getvalue())
             except Exception as e:
                 bad.append(f"{p.name}: {e}")
         rebuild_index()
         _next_round("pub")
-        S.flash = (not bad, ("Added. " + " ".join(notes)) if not bad else "Some files were not added: " + "; ".join(bad))
+        S.flash = (not bad, "Added." if not bad else "Some files were not added: " + "; ".join(bad))
         st.rerun()
 
-    _review_section(complete, rebuild_index)
-
-    st.markdown("### 5. Build your profile")
-    status = candidate.profile_status()
-    st.caption("Claude reads your CV, your text and the start of each publication and writes a structured profile: experience, skills, "
-               "publications, motivation. This sends that text to Claude through your Claude login. Contact details are left out.")
-    label = "Rebuild profile" if status["built"] else "Build my profile"
-    if status["built"] and status["stale"]:
-        st.info("Your documents changed since the profile was built. Rebuild it to include the changes. (Rebuilding replaces your edits below.)")
-    if st.button(label, key="profile-build", disabled=not have_cv, type="primary"):
-        with st.spinner("Reading your documents (a minute or two)..."):
-            ok, msg = candidate.build_profile(complete)
-            if ok:
-                rebuild_index()
-        S.flash = (ok, msg)
-        st.rerun()
-    if not have_cv:
-        st.caption("Add your CV first.")
-
-    if status["built"]:
-        st.markdown("### Your profile")
-        st.caption(f"Built {status['built_at']}. This is what the tool believes about you; every answer about you is drawn from it and your documents. "
-                   "Correct anything wrong, then save.")
-        text = st.text_area("Profile", value=candidate.read_profile(), height=460, key=f"profile_text_{_round('ptext')}", label_visibility="collapsed")
-        if st.button("Save changes", key="profile-save", disabled=text.strip() == candidate.read_profile().strip()):
-            candidate.write_profile(text)
-            rebuild_index()
-            _next_round("ptext")
-            S.flash = (True, "Profile saved.")
-            st.rerun()
-        st.caption("Next: add a role with + New role at the top.")
-
-
-def _item_title(it: dict) -> str:
-    tag = extract.KIND_NAMES[it["kind"]] + (f" ({it['label']})" if it["label"] != "fact" else "")
-    return f"**{tag}** from {it['source']}" + (" . edited by you" if it.get("edited") else "") + (" . source changed, check" if it.get("changed") else "")
-
-
-def _review_section(complete, rebuild_index) -> None:
-    """What Claude found in your documents. Only what you accept is used by the prep tools."""
-    st.markdown("### 4. Review what was found")
-    st.caption("Each item shows the exact words of your file it came from. Accept it, correct it, or remove it. "
-               "Only accepted items go to the prep tools. Anything Claude wrote that is not in your file is set aside, never shown as a fact.")
-    data = extract.load()
-    c = extract.counts(data)
-    docs = _all_sources()
-    if not data["items"]:
-        st.caption("Nothing to review yet. Save your CV, your text or a publication above." if not docs else
-                   "Nothing was found yet. Press the button to read your documents.")
-    cols = st.columns(2)
-    if cols[0].button("Read my documents again", key="extract-all", disabled=not docs or complete is None, use_container_width=True,
-                      help="Reads every document above with Claude again. Items you accepted stay."):
-        notes = [_extract_one(complete, name, text) for name, text in docs]
-        rebuild_index()
-        S.flash = (True, " ".join(notes))
-        st.rerun()
-    if complete is None:
-        st.caption("Claude through your Claude Code login is not available, so nothing can be read right now.")
-    pend = [it for it in data["items"] if it["status"] == "pending"]
-    if pend and cols[1].button(f"Accept all {len(pend)} pending", key="accept-all", use_container_width=True):
-        for it in pend:
-            extract.set_status(data, it["id"], "accepted")
-        extract.save(data)
-        rebuild_index()
-        st.rerun()
-    if data["items"]:
-        st.caption(f"{c['accepted']} accepted, {c['pending']} waiting for you, {c['unmatched']} set aside.")
-
-    notes = extract.conflicts(data)
-    gaps = extract.gaps(data)
-    if notes or gaps:
-        with st.expander(f"Conflicts and gaps ({len(notes) + len(gaps)})"):
-            for x in notes:
-                st.markdown(f"- Conflict: {x}")
-            for x in gaps:
-                st.markdown(f"- {x}")
-            st.caption("The tool never fills these in. Add the missing detail to your CV or text and read the document again.")
-
-    if pend:
-        groups = extract.review_groups(data)
-        st.caption("Open a section, then decide for the whole section at once or item by item. An item you decide on overrides the section choice.")
-        with st.form("review-form"):
-            for section, glist in groups:
-                if section == "Experience":
-                    st.markdown("**Experience**")
-                for gkey, title, items in glist:
-                    label = f"{title} ({len(items)})" if section != "Experience" else f"{title}, {len(items)} item{'s' if len(items) != 1 else ''}"
-                    with st.expander(label, expanded=False):
-                        st.radio("Whole group", ["Decide later", "Accept all", "Remove all"], key=f"rv_grp_{gkey}", horizontal=True,
-                                 help="Applies to every item below that you leave on 'Decide later'.")
-                        for it in items:
-                            st.markdown(_item_title(it))
-                            st.text_area("Item", value=it["text"], key=f"rv_text_{it['id']}", label_visibility="collapsed", height=68)
-                            st.caption("Your words: \u201c" + " ... ".join(extract.evidence_list(it)) + "\u201d")
-                            st.radio("Decision", ["Decide later", "Accept", "Remove"], key=f"rv_dec_{it['id']}", horizontal=True, label_visibility="collapsed")
-            if st.form_submit_button("Apply decisions", type="primary"):
-                group_of = {it["id"]: gkey for _s_, gl in groups for gkey, _t, items in gl for it in items}
-                for it in pend:
-                    dec = S.get(f"rv_dec_{it['id']}", "Decide later")
-                    if dec == "Decide later":
-                        dec = {"Accept all": "Accept", "Remove all": "Remove"}.get(S.get(f"rv_grp_{group_of.get(it['id'])}", "Decide later"), "Decide later")
-                    text = S.get(f"rv_text_{it['id']}", it["text"])
-                    if dec == "Accept":
-                        extract.set_status(data, it["id"], "accepted", text)
-                    elif dec == "Remove":
-                        extract.set_status(data, it["id"], "removed")
-                    elif text != it["text"]:
-                        extract.set_status(data, it["id"], "pending", text)
-                extract.save(data)
-                rebuild_index()
-                st.rerun()
-
-    acc = [it for it in data["items"] if it["status"] == "accepted"]
-    if acc:
-        with st.expander(f"Accepted ({len(acc)})"):
-            for it in acc:
-                r1, r2 = st.columns([8, 1], vertical_alignment="center")
-                r1.markdown(f"{_item_title(it)}  \n{it['text']}")
-                if r2.button("", key=f"rm_{it['id']}", icon=":material/delete:", type="tertiary", help="Remove this item"):
-                    extract.set_status(data, it["id"], "removed")
-                    extract.save(data)
-                    rebuild_index()
-                    st.rerun()
-    bad = [it for it in data["items"] if it["status"] == "unmatched"]
-    if bad:
-        with st.expander(f"Set aside: not found in your file ({len(bad)})"):
-            st.caption("Claude gave these, but the words it quoted are not in your file, so they cannot be accepted.")
-            for it in bad:
-                st.markdown(f"{extract.KIND_NAMES[it['kind']]} from {it['source']}: {it['text']}")
-                st.caption("Quoted: \u201c" + " ... ".join(extract.evidence_list(it)) + "\u201d")
-            if st.button("Dismiss these", key="dismiss-bad"):
-                extract.dismiss_unmatched(data)
-                extract.save(data)
-                st.rerun()
+    _index_status(index)
+    st.caption("Next: add a role with + New role at the top.")
 
 
 # ---------------------------------------------------------------- roles

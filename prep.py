@@ -13,16 +13,18 @@ from pathlib import Path
 import candidate
 import settings
 
-MAX_CONTEXT = 60_000
+MAX_CONTEXT = 400_000          # characters in all (about 100,000 tokens)
+BLOCK_LIMIT = 60_000           # characters of one document, such as the job description
+WHOLE_LIMIT = 150_000          # characters of the CV and of About you: they are never cut unless they are longer than this
 
 GROUND = """You are an interview coach helping one person prepare for one job. You are given documents between tags: \
-<facts> (items the person reviewed and accepted, each with its source), <profile> (built from their CV), <about> (written by them), <cv> (the CV for this role), <job> (the job description) and \
+<about> (written by them), <cv> (the CV for this role), <job> (the job description) and \
 <intent> (what they want this application to show). Any of them may be missing.
 
 Rules that always apply:
 - Everything you say about the person must come from those documents. Never invent employers, dates, numbers, methods, \
 results, publications or skills. If a detail is not in the documents, write it as a gap.
-- After every statement about the person, name the document it came from in square brackets: [Facts], [Profile], [About], [CV], [Intent]. Prefer <facts> where it covers the point, and treat lines marked "(claim)" as unproven. \
+- After every statement about the person, name the document it came from in square brackets: [About], [CV], [Intent]. \
 Statements about the job come from [Job].
 - General interview advice that is not from a document ends with [model knowledge].
 - Where the person would need a fact the documents lack, write a line starting with "GAP:" saying what to add. Do not fill it in.
@@ -65,7 +67,7 @@ TOOLS: dict[str, Tool] = {t.key: t for t in (
     Tool("questions", "Likely questions", "Questions to expect for this role, with what to draw on.",
          "List the questions this interviewer is most likely to ask, grouped as: Motivation and fit; Behavioral; Technical for this role; "
          "and Questions about the person's own work. For each question, give in one or two lines what in the documents to draw on (with tags) "
-         "or a GAP: line when nothing covers it. In the last group, ask about specific items in the profile, CV and publications "
+         "or a GAP: line when nothing covers it. In the last group, ask about specific items in the CV, About you and publications "
          "(methods chosen, what went wrong, what they would do differently), and add a short set of hard follow-ups for the two strongest of them. "
          "End with five questions the person could ask the interviewer."),
     Tool("publications", "Publication deep-dives", "How to talk about each paper in an interview.",
@@ -87,19 +89,18 @@ def _clip(text: str, limit: int) -> str:
 def context(role: candidate.Role) -> str:
     """The person's documents and the job, in tagged blocks. Only what exists is included."""
     cv = role.cv() or candidate.cv_path()
-    parts = [("facts", candidate.read_facts()), ("profile", candidate.read_profile()), ("about", candidate.read_about()),
-             ("cv", candidate.read_text(cv, 30_000) if cv else ""),
+    parts = [("about", candidate.read_about()), ("cv", candidate.read_text(cv, WHOLE_LIMIT) if cv else ""),
              ("job", candidate.job_description_text(role)), ("intent", candidate.intent_text(role))]
     head = f"Role: {role.name}" + (f" at {role.company}" if role.company else "") + f" ({role.kind} position)."
-    body = "\n\n".join(f"<{tag}>\n{_clip(text.strip(), 20_000)}\n</{tag}>" for tag, text in parts if text.strip())
+    body = "\n\n".join(f"<{tag}>\n{_clip(text.strip(), WHOLE_LIMIT if tag in ('cv', 'about') else BLOCK_LIMIT)}\n</{tag}>" for tag, text in parts if text.strip())
     return _clip(f"{head}\n\n{body}", MAX_CONTEXT)
 
 
 def missing_inputs(role: candidate.Role) -> list[str]:
     """What the tools cannot do without, in words for the user."""
     out = []
-    if not candidate.read_profile().strip() and not (role.cv() or candidate.cv_path()):
-        out.append("your CV or profile")
+    if not (role.cv() or candidate.cv_path()):
+        out.append("your CV")
     if not candidate.job_description_text(role).strip():
         out.append("the job description")
     return out

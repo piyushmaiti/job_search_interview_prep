@@ -5,7 +5,7 @@ publications, and kept as a Markdown file you can read and correct. Each role (o
 folder with the pasted job description, your intent for that application and the CV you send there.
 
 Everything lives in workspace/ (private, never committed):
-  workspace/profile/   cv.pdf|md|txt, about.md, publications/*.pdf, profile.md
+  workspace/profile/   cv.pdf|md|txt, about.md, publications/*.pdf
   workspace/roles/<role>/   role.json, job_description.md, intent.md, cv.pdf|md|txt
 Both folders are document sources in config.yaml, so everything in them is searchable and citable like any other source.
 """
@@ -24,42 +24,16 @@ import settings
 
 KINDS = ("Industry", "Academic")
 CV_EXTS = (".pdf", ".docx", ".md", ".txt")
-PROFILE_PINNED = ["profile.md", "facts.md", "about.md", "cv.*"]
+PROFILE_PINNED = ["about.md", "cv.*"]
 ROLE_PINNED = ["job_description.md", "intent.md"]
 MAX_UPLOAD_BYTES = 20_000_000
 MAX_DOCX_XML = 10_000_000          # unpacked text of a .docx; a real CV is far smaller
 
 ROLE_PROMPT = (
-    "preparing for job interviews. The documents about the user (profile.md, about.md, cv) and the job description of the role "
+    "preparing for job interviews. The documents about the user (about.md, cv) and the job description of the role "
     "being prepared are provided as sources. Answer about the user only from those documents and cite them; never invent "
     "experience, employers, dates, numbers or skills. If the documents do not say it, say it is not in their documents.")
 
-PROFILE_SYSTEM = """You build a candidate profile from the documents a person gives you, to be used later for interview preparation. \
-Write one Markdown document with exactly these sections, in this order:
-
-# Profile: <the person's name if the CV gives it, otherwise "the candidate">
-## Summary
-Three to five factual sentences: field, seniority, main strengths, what they are looking for if the documents say.
-## Experience
-One "### <title>, <organisation> (<dates>)" subsection per position, newest first. Under it, bullets with the concrete \
-responsibilities, methods, tools, results and numbers, exactly as the documents state them.
-## Education
-## Skills
-Grouped (for example methods, tools, languages), only skills the documents mention.
-## Publications
-One bullet each: title, venue, year, and the person's role if stated.
-## Projects and achievements
-## Motivation and goals
-From the "about you" text, in the person's own words where possible.
-## Not covered in the documents
-Things an interviewer would likely ask that the documents do not state.
-
-Rules:
-- Use only facts that are in the documents. Where something is missing write "not stated". Never invent employers, dates, \
-numbers, skills or publications.
-- Keep the person's own wording for claims and keep numbers exact.
-- Leave out contact details (phone, email, street address) and any identification numbers.
-- Be compact. Return only the document."""
 
 
 # ---------------------------------------------------------------- paths
@@ -208,100 +182,6 @@ def delete_publication(name: str) -> None:
     settings.assert_writable(profile_dir() / "publications" / safe_name(name)).unlink(missing_ok=True)
 
 
-def profile_md_path() -> Path:
-    return profile_dir() / "profile.md"
-
-
-def read_profile() -> str:
-    try:
-        return profile_md_path().read_text(encoding="utf-8")
-    except OSError:
-        return ""
-
-
-def read_facts() -> str:
-    """The facts the person has reviewed and accepted (written by extract.py). Empty until at least one is accepted."""
-    try:
-        return (profile_dir() / "facts.md").read_text(encoding="utf-8")
-    except OSError:
-        return ""
-
-
-def write_profile(text: str) -> None:
-    _write(profile_md_path(), text.strip() + "\n")
-
-
-def _meta_path() -> Path:
-    return profile_dir() / "profile.json"
-
-
-def inputs_stamp() -> str:
-    """Changes whenever the CV, the about text or a publication changes."""
-    parts = []
-    for p in [cv_path(), profile_dir() / "about.md"] + [profile_dir() / "publications" / n for n in list_publications()]:
-        if p and p.is_file():
-            s = p.stat()
-            parts.append(f"{p.name}:{s.st_size}:{int(s.st_mtime)}")
-    return "|".join(parts)
-
-
-def profile_status() -> dict:
-    """{'built': bool, 'built_at': str, 'stale': bool}"""
-    if not profile_md_path().is_file():
-        return {"built": False, "built_at": "", "stale": False}
-    try:
-        meta = json.loads(_meta_path().read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        meta = {}
-    return {"built": True, "built_at": meta.get("built_at", ""), "stale": meta.get("stamp") != inputs_stamp()}
-
-
-def looks_like_profile(text: str) -> bool:
-    return text.lstrip().startswith("# ") and "## Experience" in text and len(text) > 200
-
-
-def profile_prompt(max_pub_chars: int = 30_000) -> str:
-    cv = cv_path()
-    if not cv:
-        raise ValueError("Upload your CV or resume first.")
-    parts = [f"CV OR RESUME:\n{read_text(cv)}"]
-    about = read_about()
-    if about:
-        parts.append(f"ABOUT ME (written by the person):\n{about}")
-    pubs, used = [], 0
-    d = profile_dir() / "publications"
-    for name in list_publications():
-        try:
-            t = read_text(d / name, 4000)
-        except Exception:
-            continue
-        if used + len(t) > max_pub_chars:
-            break
-        used += len(t)
-        pubs.append(f'<publication file="{name}">\n{t}\n</publication>')
-    if pubs:
-        parts.append("PUBLICATIONS (the start of each file):\n" + "\n".join(pubs))
-    return "\n\n".join(parts) + "\n\nWrite the profile document now."
-
-
-def build_profile(complete, timeout: int = 600) -> tuple[bool, str]:
-    """Ask a model (the callable `complete(system, prompt, timeout)` of a Claude login provider) to write profile.md from
-    the uploaded documents. Returns (done, message). Nothing is written unless the answer looks like a profile."""
-    if complete is None:
-        return False, "Building the profile needs Claude through your Claude Code login (the `claude` command). It is not available."
-    complete = getattr(complete, "complete", complete)           # a provider, or its complete function
-    try:
-        out = complete(PROFILE_SYSTEM, profile_prompt(), timeout=timeout)
-    except Exception as e:
-        return False, f"Could not build the profile: {e}"
-    text = (out.text or "").strip()
-    if not looks_like_profile(text):
-        return False, "The model did not return a profile document. Nothing was changed. Try again."
-    write_profile(text)
-    _write(_meta_path(), json.dumps({"built_at": time.strftime("%Y-%m-%d %H:%M"), "stamp": inputs_stamp(), "model": getattr(out, "model", "")}))
-    return True, "Profile built. Read it below and correct anything that is wrong."
-
-
 # ---------------------------------------------------------------- roles
 @dataclass
 class Role:
@@ -428,8 +308,27 @@ def delete_role(slug: str) -> None:
 
 
 # ---------------------------------------------------------------- how the roles reach the search
+# Files that earlier versions of this tool wrote into workspace/profile/. They are no longer used. They stay on disk until the
+# person deletes them on the Profile page, and meanwhile they are hidden from the sources so they are never searched or sent.
+LEGACY_FILES = ("profile.md", "profile.json", "facts.md", "facts.json", "about_clean.json", "about_original.json")
+
+
+def legacy_files() -> list[Path]:
+    return [p for p in (profile_dir() / n for n in LEGACY_FILES) if p.is_file()]
+
+
+def delete_legacy_files() -> int:
+    n = 0
+    for p in legacy_files():
+        settings.assert_writable(p).unlink(missing_ok=True)
+        n += 1
+    return n
+
+
 def visible(group: str, role_slug: str | None) -> bool:
-    """A source belongs in the current view unless it is another role's file."""
+    """A source belongs in the current view unless it is another role's file or a leftover file from an earlier version."""
+    if group in ("profile/profile.md", "profile/facts.md"):
+        return False
     if not group.startswith("roles/"):
         return True
     return bool(role_slug) and group.startswith(f"roles/{role_slug}/")
@@ -462,7 +361,52 @@ def source_label(group: str) -> str:
     if group.startswith("profile/publications/"):
         return f"Publication: {stem}"
     if group.startswith("profile/"):
-        return {"profile": "My profile", "facts": "My reviewed facts", "about": "About me", "cv": "My main CV"}.get(stem, name)
+        return {"about": "About me", "cv": "My main CV"}.get(stem, name)
     if group.startswith("roles/"):
         return {"job_description": "Job description", "intent": "My intent", "cv": "CV for this role"}.get(stem, name)
     return name
+
+
+# ---------------------------------------------------------------- is everything in the index?
+def _words(text: str) -> list[str]:
+    import unicodedata
+    return re.findall(r"\w+", unicodedata.normalize("NFKC", text or "").casefold())
+
+
+def index_report(index) -> list[dict]:
+    """For the CV and About you: how many characters there are, how many index pieces they became, what share of the text is in
+    those pieces, and anything that could mean something is missing. Counted from the real index, not assumed."""
+    rows = []
+    for label, path in (("CV", cv_path()), ("About you", profile_dir() / "about.md")):
+        if not path or not path.is_file():
+            continue
+        row = {"name": label, "file": path.name, "chars": 0, "pieces": 0, "covered": 0.0, "notes": []}
+        try:
+            text = read_text(path)
+        except Exception as e:
+            row["notes"].append(f"could not be read: {e}")
+            rows.append(row)
+            continue
+        row["chars"] = len(text)
+        if path.suffix.lower() == ".pdf" and len(text.strip()) < 200:
+            row["notes"].append("has almost no text. A scanned PDF has no text layer, so nothing can be indexed from it. Upload a text version.")
+        if len(text) >= 200_000:
+            row["notes"].append("is very long, so only its first 200,000 characters are read.")
+        if settings.redact(text) != text:
+            row["notes"].append("has places that look like a password or key. They are hidden in the index.")
+        chunks = [c for c in index.chunks if c.group == f"profile/{path.name}"]
+        row["pieces"] = len(chunks)
+        if not chunks:
+            row["notes"].append("is not in the search index yet. Press Re-index sources.")
+        else:
+            from collections import Counter
+            have = Counter()
+            for c in chunks:                                   # a chunk's heading is kept beside its text, so count both
+                have.update(_words(f"{c.section or ''} {c.text}"))
+            src = Counter(_words(text))
+            total = sum(src.values())
+            row["covered"] = (sum((src & have).values()) / total) if total else 1.0     # each word of the text, counted as often as it occurs
+            if row["covered"] < 0.98:
+                row["notes"].append(f"only {row['covered']:.0%} of its text was found in the index pieces. Re-index, and tell me if it stays low.")
+        rows.append(row)
+    return rows

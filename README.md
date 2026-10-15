@@ -18,7 +18,7 @@ It runs on your own computer. Your documents stay in a folder here, and nothing 
 
 **It never invents your experience.** Everything about you has to come from your documents and is marked with the document it came from. General advice is marked `model knowledge`. Anything your documents do not cover is shown as a `GAP:` line for you to fill in. Figures that appear in a draft but in none of your documents are flagged for you to check. Models can still make mistakes, so read every draft before you use it.
 
-![The Profile page, with the review of what was found](docs/screenshot-profile.png)
+![The Profile page](docs/screenshot-profile.png)
 
 **A role's page:** your sources and code projects on the left, with the **Add a code project** box, the conversation in the middle, and the evidence for each citation on the right. The tabs above switch between Research, Prep tools and Mock interview.
 
@@ -29,8 +29,7 @@ These screenshots use made-up sample data and the offline demo mode.
 ## ✨ Features
 
 **🧑‍💼 Your profile and roles**
-- One shared profile built from your CV (PDF, Word, Markdown or text), an optional "about you" text and optional publications. You can read and correct it.
-- Every file you save is read by Claude and turned into organised items, grouped by section like a CV (jobs, credentials, papers, abstracts, talks, skills, awards, service, extracurriculars, recommendations). Each item shows the exact words of your file it came from. You accept, correct or remove each one. Only accepted items go to the prep tools. Anything not found in your file is set aside, and missing dates or results are listed as gaps.
+- One shared profile: your CV (PDF, Word, Markdown or text), an optional "about you" text and optional publications, used exactly as you give them. Nothing is rewritten, summarised or tidied. A check on the Profile page shows how much of your CV and About you is in the search index, and warns about a scanned PDF with no text.
 - One tab per role, marked Industry or Academic. Each role has its own pasted job description (saved as a Markdown file), your intent, a CV for that role, and its own chats.
 
 **📚 Research, in every role**
@@ -53,11 +52,11 @@ Planned, not built yet: voice for the mock interview.
 
 ## 🧭 How it is organised
 
-1. **Profile** (the first tab): upload your CV (PDF, Word, Markdown or text), write a short "about you" and add publications. Each time you save one, Claude reads it and lists what it found under **Review what was found**, organised like a CV: education and credentials, one group per job (with a few merged items each, not one per bullet), papers, conference abstracts and posters, talks, skills, awards, service, teaching, extracurriculars, recommendations and your own words. Each item shows the exact words of your file it came from and keeps your wording. You accept, edit or remove an item, or decide for a whole section at once, and only accepted items go to the prep tools. Anything Claude gave that is not in your file is set aside. Missing dates and results are listed as gaps and never filled in. You can also press **Build my profile** for a written profile. All roles share your profile.
+1. **Profile** (the first tab): upload your CV (PDF, Word, Markdown or text), write a short "about you" and add publications. Everything is used exactly as you give it. Saving a file indexes it and sends nothing anywhere. **What is indexed** then shows, counted from the real index, how many characters of your CV and About you were indexed and how much of the text is in the index. All roles share this profile.
 2. **A tab per role** (**+ New role**): the title, the company, whether it is an **Industry** or **Academic** role, the pasted job description (saved as a Markdown file), your intent, and the CV for this role (or your main one).
 3. Inside a role, pick **Research**, **Prep tools** or **Mock interview**. Each role keeps its own chats, results and interviews. Prep tools and the mock interview use Claude through your Claude Code login (the `claude` command) and need a built profile or CV and a job description.
 
-Your private files live in `workspace/` (git-ignored): `workspace/profile/` (your files, the review items in `facts.json`, and the accepted ones in `facts.md`), `workspace/roles/<role>/` and `workspace/prep/<role>/`. Prep results and mock interviews are saved there as Markdown, and are not searched by Research. Deleting a role deletes them.
+Your private files live in `workspace/` (git-ignored): `workspace/profile/` (your CV, About you and papers), `workspace/roles/<role>/` and `workspace/prep/<role>/`. Prep results and mock interviews are saved there as Markdown, and are not searched by Research. Deleting a role deletes them.
 
 ## 🔎 What the research part does
 
@@ -243,7 +242,7 @@ The points below are enforced in code and covered by automated tests, which were
 - **Studies and clinical settings: be extra careful.** If your code was built for a study or in a clinical setting, treat it with extra care. Code, comments, file names, paths and logs can reveal patient or participant details, even when no data files are present. By default, the tool never reads NIfTI files (`.nii`, `.nii.gz`) or JPEG images (`.jpg`, `.jpeg`) that are part of a code project, so their contents are never sent to a model. The same goes for other image and imaging files. A project can switch on `nifti_headers` in `config.local.yaml`. Then the names, sizes and header fields (shape, voxel size, data type) of its NIfTI files are included. Leave that off for clinical data. The tool cannot promise to catch every identifier, so check what you send and follow your institution's rules.
 - **Read-only.** Project directories are only read. Python files are parsed, never imported or run. Secret-looking files (`.env`, keys, tokens) are skipped and secret-looking values in code are redacted before indexing. Redaction cannot catch every possible secret, so the provider prompt is still your main protection.
 - **Writes stay inside this folder:** the index, sessions, outputs and caches live here and are ignored by git.
-- **Saving a CV, "about you" text or publication sends it to Claude straight away** (through your Claude Code login), so it can list what it found. Names of other people, emails and phone numbers are hidden first, but this is best effort: a name with no title and no word like "under" or "supervised by" before it can get through. Check the review list, and do not save anything you would not send to Claude.
+- **Nothing is sent when you save a file.** Your CV and About you are sent as you wrote them, contact details included, inside the prep tools and your questions, to Claude or a local Ollama model. You are asked first before they go to any other provider. The tool does not hide or rewrite anything in them.
 - **Your CV, profile and job text go to Claude, or to a local Ollama model, without a question.** If a question would also send them to Gemini or another provider (a forced choice, compare mode, or the auto fallback), you are asked first, like for code.
 - **Pasted links are fetched safely.** Only public websites on the standard ports; addresses on this computer or your network are refused, redirects are re-checked, and size and time are limited.
 - **Images in answers are removed**, because the browser would load them by itself and could carry your text to another site. Documents and web pages are treated as data, never as instructions, and Web search (off by default) can search but not open pages.
@@ -276,7 +275,6 @@ The points below are enforced in code and covered by automated tests, which were
 | `app.py`, `run_ui.sh` | Web interface (Streamlit) |
 | `prep_ui.py` | Profile, role and prep screens |
 | `candidate.py` | Profile, roles, uploads and what the search sees of them |
-| `extract.py` | Reads each saved file into organised, checkable items for review (masking, quote check, facts file) |
 | `projects.py` | Adding and removing code projects from the app |
 | `deepread.py` | The deep read: a large project read in areas by workers, then merged |
 | `safetext.py`, `webfetch.py` | Removing images from model text; fetching pasted links safely |
@@ -301,9 +299,9 @@ The points below are enforced in code and covered by automated tests, which were
 .venv/bin/python -m pytest tests
 ```
 
-The tests are offline and need no keys. They cover the profile, roles and uploads, the prep tools and mock interview (with a scripted stand-in for the model), the check for figures not in your documents, and also source selection and exclusions, page numbers and line ranges, citation tagging, routing, memory, the write limits, secret redaction, the consent gate (for every code mode), the project map and retrieval, whole-project trimming, the Explore copy and its checked citations, project knowledge, the deep read (areas, resuming, updates, Claude or Ollama), adding code projects and the folder checks, the structured extraction and review, and the web app run headlessly.
+The tests are offline and need no keys. They cover the profile, roles and uploads, the prep tools and mock interview (with a scripted stand-in for the model), the check for figures not in your documents, and also source selection and exclusions, page numbers and line ranges, citation tagging, routing, memory, the write limits, secret redaction, the consent gate (for every code mode), the project map and retrieval, whole-project trimming, the Explore copy and its checked citations, project knowledge, the deep read (areas, resuming, updates, Claude or Ollama), adding code projects and the folder checks, the check of what is indexed for the CV and About you, the CV and About you reaching the tools in full, and the web app run headlessly.
 
-**Not covered by tests:** how well a real Claude or Ollama model reads real documents and real code in the extraction and the deep read, the deep read window's provider choice inside the test harness, how good the real model's prep drafts and feedback are (the tests use a scripted stand-in, so they check what the model is given and what is kept, not what it writes), live calls to Claude, Gemini and Ollama, web search citation parsing, and Gemini image generation. For explore, the isolation was tried once live: a model was asked to read canary files placed in the parent folder, a sibling folder, the tool folder and the project root, and to run a shell command. It could do none of it. Building project knowledge was also tried once live on a small invented project. Neither check is part of the automatic tests, since they need a Claude login. The web app tests set the consent answer directly and do not click the dialog.
+**Not covered by tests:** how well a real Claude or Ollama model reads real code in the deep read, the deep read window's provider choice inside the test harness, how good the real model's prep drafts and feedback are (the tests use a scripted stand-in, so they check what the model is given and what is kept, not what it writes), live calls to Claude, Gemini and Ollama, web search citation parsing, and Gemini image generation. For explore, the isolation was tried once live: a model was asked to read canary files placed in the parent folder, a sibling folder, the tool folder and the project root, and to run a shell command. It could do none of it. Building project knowledge was also tried once live on a small invented project. Neither check is part of the automatic tests, since they need a Claude login. The web app tests set the consent answer directly and do not click the dialog.
 
 ## ⚠️ Limits
 

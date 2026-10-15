@@ -647,7 +647,7 @@ cfg = candidate.configured(cfg, role)
 eng = make_engine(cfg, index)
 
 if view == prep_ui.PROFILE:
-    prep_ui.profile_page(_claude_login(eng.providers.get("claude")), rebuild_index)
+    prep_ui.profile_page(rebuild_index, index)
     st.stop()
 if view == prep_ui.NEW_ROLE:
     prep_ui.new_role_page(rebuild_index)

@@ -56,32 +56,13 @@ class FakeProvider(Provider):
             return ProviderResult(text=f"## Overview\nA demo project read in {n} areas.\n## Architecture and data flow\nAreas feed each other.\n"
                                   "## Experiments, results and numbers\nnot stated\n## Design decisions and rationale\nnot stated\n"
                                   "## Caveats, limitations and open questions\nnone\n## Glossary\nnone", model=f"{self.model} · merge")
-        if system.startswith("You extract structured facts"):
-            import json as _json
-            doc = prompt.split("DOCUMENT:\n", 1)[-1].rsplit("\n\nReturn the JSON", 1)[0]
-            lines = [x.strip().lstrip("#- ").strip() for x in doc.splitlines() if len(x.strip().lstrip("#- ").strip()) > 25]
-            items = []
-            if lines:
-                items.append({"id": "p1", "kind": "position", "label": "fact", "text": lines[0][:60], "evidence": lines[0][:120],
-                              "title": lines[0][:30], "organisation": None, "location": None, "start": None, "end": None})
-            if len(lines) > 1:
-                items.append({"id": "w1", "kind": "work", "label": "fact", "text": lines[1][:80], "evidence": lines[1][:120], "position": "p1"})
-            if len(lines) > 2:
-                items.append({"id": "s1", "kind": "statement", "label": "framing", "text": lines[2][:80], "evidence": lines[2][:120]})
-            items.append({"id": "x1", "kind": "result", "label": "fact", "text": "Ran the entire company single-handedly",
-                          "evidence": "I ran the entire company single-handedly", "position": "p1", "metric": None})
-            return ProviderResult(text=_json.dumps({"items": items}), model=f"{self.model} · extract")
-        if system.startswith("You build a candidate profile"):
-            return ProviderResult(text="# Profile: the candidate\n\n## Summary\nA demo profile built offline from the uploaded documents. " + "x" * 200 +
-                                  "\n\n## Experience\n### Demo role, Demo organisation (2020 to 2024)\n- Did demo work.\n\n## Education\nNot stated.\n",
-                                  model=f"{self.model} · profile")
         if system.startswith("You are an interview coach"):
             if "MOCK QUESTION" in prompt:
                 return ProviderResult(text="Tell me about a time you had to learn something quickly for a project.", model=f"{self.model} · mock")
             if "FEEDBACK on" in prompt:
                 return ProviderResult(text="## What worked\nClear.\n## What to improve\nAdd the result.\n## What your documents could add\nGAP: a result.\n"
                                       "## A stronger version\nI learned it fast [add: the result].", model=f"{self.model} · mock")
-            return ProviderResult(text="## Strong matches\nDemo work [Profile].\n## Gaps\nGAP: nothing about leadership. Reached 99% accuracy.", model=f"{self.model} · prep")
+            return ProviderResult(text="## Strong matches\nDemo work [CV].\n## Gaps\nGAP: nothing about leadership. Reached 99% accuracy.", model=f"{self.model} · prep")
         paths = re.findall(r'<file path="([^"]+)">', prompt)
         name = (re.search(r"PROJECT NAME: (\S+)", prompt) or [None, "project"])[1]
         first = paths[0] if paths else "x.py"

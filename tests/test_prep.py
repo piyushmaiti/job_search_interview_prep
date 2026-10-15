@@ -119,3 +119,13 @@ def test_interview_is_saved_for_reading_later(role):
     f = next(prep.prep_dir(role).glob("mock_*.md"))
     t = f.read_text()
     assert "Q1?" in t and "A1" in t and "F1" in t and "Q2?" in t
+
+
+def test_a_long_cv_and_about_you_reach_the_tools_in_full(role):
+    cv = "# Alex Doe\n" + "\n".join(f"Worked on project {i} and wrote it up carefully." for i in range(3000)) + "\nTHE VERY LAST LINE OF THE CV."
+    assert len(cv) > 100_000
+    candidate.save_cv("cv.md", cv.encode())
+    candidate.save_about("I like messy data. " * 3000 + "THE VERY LAST LINE OF ABOUT YOU.")
+    r = candidate.create_role("Long", "Co", "Industry", "Needs imaging.", "", use_main_cv=True)
+    ctx = prep.context(r)
+    assert "THE VERY LAST LINE OF THE CV." in ctx and "THE VERY LAST LINE OF ABOUT YOU." in ctx and "cut for length" not in ctx
