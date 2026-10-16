@@ -93,7 +93,7 @@ def icon_css() -> str:
     }
     out = [
         '.st-key-mode, .st-key-mode > div { width:100%; } .st-key-mode { padding-top:6px; }',
-        '.st-key-mode [role="radiogroup"] { width:100%; justify-content:flex-end; gap:14px; flex-wrap:nowrap; }',
+        '.st-key-mode [role="radiogroup"] { width:100%; justify-content:flex-start; gap:14px; flex-wrap:nowrap; }',
         '.st-key-mode [data-testid="stRadioOption"] { position:relative; display:flex; align-items:center; gap:6px; margin:0; padding:0; cursor:pointer; }',
         '.st-key-mode [data-testid="stRadioOption"] > div { order:1; display:flex; align-items:center; }',
         '.st-key-mode [data-testid="stRadioOption"] [data-testid="stMarkdownContainer"] { display:none !important; }',
@@ -913,12 +913,12 @@ with mid:
     with st.container(key="side_mid"):
         with st.container(border=True):
             with st.container(key="convbar"):          # stays in view while a long chat scrolls
-                h1, h2, h3, h4 = st.columns([1.1, 2.4, 1.5, 1.3], vertical_alignment="center")
+                h1, h3, h4 = st.columns([2, 1.2, 1], vertical_alignment="center")
                 h1.markdown("### Conversation")
-                mode = h2.radio("Model", ["auto", "claude", "gemini", "compare", "ollama", "openai"], horizontal=True,
-                                label_visibility="collapsed", key="mode")
                 web = h3.toggle("Web search", value=S.get("web_on", cfg["web"]["default"]), key="web_w")
                 memory = h4.toggle("Memory", value=S.get("memory_on", cfg["chat"]["memory"]), key="memory_w")
+                mode = st.radio("Model", ["auto", "claude", "gemini", "compare", "ollama", "openai"], horizontal=True,
+                                label_visibility="collapsed", key="mode")
                 S.web_on, S.memory_on = web, memory
             with st.container(key="answers"):
                 for i, v in enumerate(S.views):
