@@ -26,6 +26,7 @@ from engine import Engine, TurnResult, _claude_login   # noqa: E402
 import candidate
 import projects
 import safetext
+import saved
 import webfetch                                        # noqa: E402
 import prep_ui                                          # noqa: E402
 import knowledge                                        # noqa: E402
@@ -37,7 +38,7 @@ from providers.fake import FakeProvider                # noqa: E402
 from providers.gemini import GEMINI_MODELS             # noqa: E402
 from providers.ollama import installed_models          # noqa: E402
 from providers.openai_provider import OPENAI_MODELS    # noqa: E402
-from sessions import Session, TurnRecord               # noqa: E402
+from sessions import Replay, Session, TurnRecord               # noqa: E402
 
 st.set_page_config(page_title="Interview Prep Tool", page_icon=None, layout="wide")
 S = st.session_state
@@ -244,6 +245,9 @@ input, textarea, [data-baseweb="select"] div {{ color: var(--fg) !important; }}
 [data-testid="stFileUploaderDropzone"] * {{ color: var(--fg); }}
 [data-testid="stDialog"] div[role="dialog"], [data-baseweb="modal"] > div > div, [data-testid="stTooltipContent"], [data-baseweb="tooltip"] > div {{ background: var(--bg2) !important; color: var(--fg) !important; }}
 [data-testid="stDialog"] *, [data-testid="stTooltipContent"] * {{ color: var(--fg); }}
+[data-testid="stPopoverBody"], [data-baseweb="popover"] > div {{ background: var(--bg2) !important; color: var(--fg) !important; border: 1px solid var(--line) !important; }}
+[data-testid="stPopoverBody"] *:not(button *) {{ color: var(--fg); }}
+[data-testid="stPopoverBody"] [data-testid="stCaptionContainer"] * {{ color: var(--fg); opacity: .8; }}
 [data-testid="stAlert"] {{ background: var(--soft) !important; border: 1px solid var(--line); }}
 [data-testid="stAlert"] * {{ color: var(--fg) !important; }}
 [data-testid="stExpander"] summary, [data-testid="stExpander"] summary:hover {{ background: transparent !important; color: var(--fg); }}
@@ -384,13 +388,15 @@ def short(seg: dict) -> str:
 
 
 def answer_markdown(segs: list[dict]) -> str:
-    out = []
+    out, marks = [], []
     for s in segs:
         if s["kind"] == "text":
-            out.append(re.sub(r"<(?=[a-zA-Z/!])", "&lt;", safetext.strip_images(s["text"])))
+            out.append(re.sub(r"<(?=[a-zA-Z/!])", "&lt;", safetext.strip_images(s["text"])).replace(safetext.MARK_OPEN, "").replace(safetext.MARK_CLOSE, ""))
         else:
-            out.append(f' <span class="chip {s["kind"]}" title="{html.escape(s["text"])}">{html.escape(chip_label(s))}</span> ')
-    return "".join(out)
+            marks.append(f' <span class="chip {s["kind"]}" title="{html.escape(s["text"])}">{html.escape(chip_label(s))}</span> ')
+            out.append(f"{safetext.MARK_OPEN}{len(marks) - 1}{safetext.MARK_CLOSE}")      # placed after formulas are drawn right
+    text = safetext.math_with_marks("".join(out))
+    return re.sub(f"{safetext.MARK_OPEN}(\\d+){safetext.MARK_CLOSE}", lambda m: marks[int(m.group(1))], text)
 
 
 def cite_items(segs: list[dict]) -> list[dict]:
@@ -430,6 +436,41 @@ def record_to_view(t: TurnRecord) -> dict:
                         for a in t.answers]}
 
 
+REGEN_MODELS = ("claude", "gemini", "ollama", "openai")
+
+
+def turn_index(idx: int) -> int:
+    """The place of view idx among the recorded turns of this chat (a cancelled question has a view but no recorded turn)."""
+    return sum(1 for u in S.views[:idx] if u["answers"])
+
+
+def save_view(idx: int):
+    v = S.views[idx]
+    ok = [a for a in v["answers"] if not a["error"]]
+    if ok:
+        v["saved_id"] = saved.save(candidate.get_role(ROLE), "research", {"question": v["question"], "route": v["route"], "notes": v["notes"], "answers": ok})
+
+
+def answer_again(idx: int):
+    """Ask the same question again with another model. It goes through the same consent step as any question."""
+    if S.get("pending"):
+        return
+    mode = S.get(f"regen_model_{idx}")                     # read here, so the model picked just now is the one used
+    if mode not in REGEN_MODELS:
+        return
+    S.pending = {"id": f"{time.time():.3f}", "q": S.views[idx]["question"], "regen": idx, "mode": mode}
+    S.consent_answer = None
+
+
+def show_saved_research(it: dict):
+    for a in it.get("answers", []):
+        st.markdown(f'<span class="lbl">{html.escape(a["provider"])} · {html.escape(a.get("model", ""))}</span>', unsafe_allow_html=True)
+        st.markdown(answer_markdown(a.get("segments", [])), unsafe_allow_html=True)
+        marks = cite_items(a.get("segments", []))
+        if marks:
+            st.caption("Sources: " + " · ".join(chip_label(c) for c in marks))
+
+
 def show_view(v: dict, idx: int, chunk_by_id: dict):
     st.markdown(f'<div class="q">{html.escape(v["question"])}</div>', unsafe_allow_html=True)
     if v["route"]:
@@ -454,6 +495,17 @@ def show_view(v: dict, idx: int, chunk_by_id: dict):
                                   on_click=pick_evidence, args=(c,))
     if v.get("image") and Path(v["image"]).exists():
         st.image(v["image"], caption="AI-generated draft. Check small text and numbers against the sources.")
+    if any(not a["error"] for a in answers):
+        c1, c2, _ = st.columns([1, 2, 2], vertical_alignment="center")
+        c1.button("Saved" if v.get("saved_id") else "Save", key=f"save_{idx}", disabled=bool(v.get("saved_id")), on_click=save_view, args=(idx,),
+                  help="Keep this question and its answers in this role's Saved list.")
+        ready = [m for m in REGEN_MODELS if m in eng.available()]
+        if ready:
+            with c2.popover("Try another model"):
+                st.caption("Asks the same question again, with your current Sources and settings. The new answer is added below the old one. "
+                           "If code or your documents would be sent, it asks which provider may receive them.")
+                pick = st.radio("Model", ready, key=f"regen_model_{idx}", label_visibility="collapsed")
+                st.button("Answer again", key=f"regen_go_{idx}", on_click=answer_again, args=(idx,), disabled=bool(S.get("pending")))
     st.markdown('<div class="flow"></div>', unsafe_allow_html=True)
 
 
@@ -951,6 +1003,8 @@ with mid:
             with st.container(key="answers"):
                 for i, v in enumerate(S.views):
                     show_view(v, i, chunk_by_id)
+            if role:
+                prep_ui.saved_section(role, "research", show_saved_research)
 
             if not S.selected:
                 st.info("No sources are ticked, so answers come from the model's own knowledge only. Tick sources on the left to search your files.")
@@ -962,16 +1016,35 @@ with mid:
 
             p = S.pending
             if p:
+                regen = p.get("regen")
+                if regen is not None and not (regen < len(S.views) and S.views[regen]["question"] == p["q"]):
+                    S.pending = p = None                  # the chat changed while the choice was open
+                    st.rerun()
                 st.markdown(f'<div class="q">{html.escape(p["q"])}</div>', unsafe_allow_html=True)
+                if regen is not None:
+                    st.markdown(f'<div class="note">Answering again with {html.escape(p["mode"])}.</div>', unsafe_allow_html=True)
+                ti = turn_index(regen) if regen is not None else 0
+                replay = Replay(id=S.session.id, turns=list(S.session.turns[:ti]), role=ROLE) if regen is not None else None
                 try:
                     with st.spinner("Exploring the project (this can take a few minutes)..." if S.get("code_depth") == "Explore" else "Thinking..."):
-                        res = eng.ask(p["q"], mode=mode, web=web, memory=memory, groups=set(S.selected or ()),
+                        res = eng.ask(p["q"], mode=p.get("mode") or mode, web=web, memory=memory, groups=set(S.selected or ()),
                                       code_mode={"Whole project": "whole", "Explore": "explore"}.get(S.get("code_depth"), "retrieve"),
                                       use_knowledge=S.get("use_knowledge", True),
-                                      session=S.session, consent=ui_consent)
+                                      session=replay if regen is not None else S.session, consent=ui_consent)
                 except NeedConsent as nc:
                     consent_dialog(nc.req)      # nothing has been sent; the dialog decides what happens next
                 else:
-                    S.views.append(to_view(res))
+                    if regen is None:
+                        S.views.append(to_view(res))
+                    elif res.answers:
+                        # the new answer joins the old one; the first answer stays the chat's memory, and the saved copy is updated
+                        v = S.views[regen]
+                        v["answers"] += to_view(res)["answers"]
+                        v["saved_id"] = None
+                        if ti < len(S.session.turns) and replay.turns and replay.turns[-1].question == p["q"]:
+                            S.session.turns[ti].answers += replay.turns[-1].answers
+                            S.session.save()
+                    else:
+                        S.views[regen]["notes"] = S.views[regen]["notes"] + (res.notes or ["Nothing was sent."])
                     S.pending, S.consent_answer = None, None   # the choice is never remembered
                     st.rerun()

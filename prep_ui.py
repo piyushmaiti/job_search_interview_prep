@@ -1,10 +1,13 @@
 """The screens that are about you rather than about searching: the profile, a new role, and a role's details."""
 from __future__ import annotations
 
+import html
+
 import streamlit as st
 
 import candidate
 import safetext
+import saved
 
 S = st.session_state
 PROFILE, NEW_ROLE = "__profile__", "__new__"
@@ -367,7 +370,7 @@ def prep_page(role: candidate.Role, writers: dict) -> None:
             if ok:
                 st.rerun()
         if saved:
-            st.markdown(safetext.strip_images(saved))
+            st.markdown(safetext.math(safetext.strip_images(saved)))
             note = prep.check(saved, role)
             if note:
                 st.warning(note)
@@ -382,6 +385,7 @@ def mock_page(role: candidate.Role, writers: dict) -> None:
         st.markdown("### Mock interview, beta")
         st.caption("Text only for now. You get one question at a time, write your answer, and receive written feedback "
                    "and a stronger version of your answer. No scores.")
+        saved_section(role, "mock", show_saved_mock)
         miss = prep.missing_inputs(role)
         if miss:
             st.info("Add " + " and ".join(miss) + " first.")
@@ -431,10 +435,13 @@ def mock_page(role: candidate.Role, writers: dict) -> None:
         else:
             st.markdown("**Your answer**")
             st.write(cur["answer"])
-            st.markdown(safetext.strip_images(cur["feedback"]))
+            st.markdown(safetext.math(safetext.strip_images(cur["feedback"])))
             note = prep.check(cur["feedback"], role)
             if note:
                 st.warning(note)
+            st.button("Saved" if cur.get("saved_id") else "Save this question and answer", key=f"mocksave_{role.slug}_{len(items)}",
+                      disabled=bool(cur.get("saved_id")), on_click=save_mock_item, args=(role, state, cur),
+                      help="Keep this question, your answer and the feedback in this role's Saved list.")
             more = len(items) < mock.MAX_QUESTIONS
             c1, c2 = st.columns(2)
             if more and c1.button("Next question", key=f"mocknext_{role.slug}_{len(items)}", use_container_width=True):
@@ -450,3 +457,41 @@ def mock_page(role: candidate.Role, writers: dict) -> None:
                 S.pop(key, None)
                 S.flash = (True, "Interview saved in this role's prep folder.")
                 st.rerun()
+
+
+def saved_section(role: candidate.Role, kind: str, show) -> None:
+    """The questions and answers kept for this role. show(item) draws one. Delete asks first."""
+    rows = saved.items(role, kind)
+    with st.expander(f"Saved ({len(rows)})"):
+        if not rows:
+            st.caption("Nothing saved yet. Press Save under an answer to keep it here.")
+        for it in rows:
+            st.markdown(f"**{html.escape(' '.join(str(it.get('question', '')).split())[:90])}**  \n<span class='lbl'>{html.escape(it.get('saved_at', ''))}</span>",
+                        unsafe_allow_html=True)
+            show(it)
+            if S.get("confirm_saved") == it["id"]:
+                st.warning("Delete this saved item? This cannot be undone.")
+                y, n = st.columns(2)
+                if y.button("Delete", key=f"sv_yes_{it['id']}", use_container_width=True):
+                    saved.delete(role, it["id"])
+                    S.confirm_saved = None
+                    st.rerun()
+                if n.button("Keep", key=f"sv_no_{it['id']}", use_container_width=True):
+                    S.confirm_saved = None
+                    st.rerun()
+            elif st.button("Delete", key=f"sv_del_{it['id']}", type="tertiary", icon=":material/delete:", help="Delete this saved item"):
+                S.confirm_saved = it["id"]
+                st.rerun()
+            st.markdown('<div class="flow"></div>', unsafe_allow_html=True)
+
+
+def show_saved_mock(it: dict) -> None:
+    st.caption(f"{it.get('interview', '')} interview")
+    st.markdown("**Your answer**")
+    st.write(it.get("answer", ""))
+    st.markdown(safetext.math(safetext.strip_images(it.get("feedback", ""))))
+
+
+def save_mock_item(role: candidate.Role, state: dict, cur: dict) -> None:
+    cur["saved_id"] = saved.save(role, "mock", {"interview": state["kind"], "started": state["started"], "question": cur["question"],
+                                                "answer": cur.get("answer", ""), "feedback": cur.get("feedback", "")})
