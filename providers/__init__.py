@@ -4,6 +4,7 @@ from .claude_code import ClaudeCodeProvider
 from .claude_hybrid import HybridClaudeProvider
 from .gemini import GeminiProvider
 from .ollama import OllamaProvider
+from .openai_provider import OpenAIProvider
 
 
 def build_providers(cfg: dict, overrides: dict | None = None) -> dict[str, Provider]:
@@ -16,4 +17,5 @@ def build_providers(cfg: dict, overrides: dict | None = None) -> dict[str, Provi
         "claude": claude_cls(o.get("claude") or m["claude"], effort=m.get("claude_effort", "medium"), fallbacks=m.get("claude_fallbacks", True), role=role),
         "gemini": GeminiProvider(o.get("gemini") or m["gemini"], role=role),
         "ollama": OllamaProvider(o.get("ollama") or m.get("ollama"), role=role),
+        "openai": OpenAIProvider(o.get("openai") or m.get("openai", "gpt-6.1-sol"), role=role),
     }

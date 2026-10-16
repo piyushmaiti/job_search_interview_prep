@@ -1,5 +1,6 @@
 anthropic
 google-genai
+openai
 pypdf
 numpy
 scikit-learn

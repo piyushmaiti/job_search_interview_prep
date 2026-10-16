@@ -316,11 +316,33 @@ def mode_bar(role: candidate.Role) -> str:
     return picked
 
 
+WRITER_LABELS = {"claude": "Claude (your login)", "openai": "OpenAI (API key, billed per use)"}
+
+
 def _no_login() -> None:
-    st.warning("Writing drafts and feedback uses Claude through your Claude Code login (the `claude` command), which is not available here.")
+    st.warning("Writing drafts and feedback needs Claude through your Claude Code login (the `claude` command) or an OpenAI key "
+               "(OPENAI_API_KEY in .env). Neither is available here.")
 
 
-def prep_page(role: candidate.Role, complete) -> None:
+def _pick_writer(writers: dict, key: str):
+    """Which model writes. Returns (provider or None, ready to go, its name).
+
+    Claude uses your login. OpenAI uses your API key and needs a yes each time, because your CV, About you and the job text are sent to it."""
+    ready = {k: v for k, v in writers.items() if v is not None}
+    if not ready:
+        _no_login()
+        return None, False, ""
+    name = next(iter(ready))
+    if len(ready) > 1:
+        name = st.radio("Write with", list(ready), format_func=WRITER_LABELS.get, horizontal=True, key=f"writer_{key}")
+    agreed = True
+    if name == "openai":
+        agreed = st.checkbox("Send my CV, About you, intent and the job description to OpenAI for this. OpenAI bills your API key.",
+                             key=f"openai_ok_{key}_{_round('openai_ok')}")
+    return ready[name], agreed, name
+
+
+def prep_page(role: candidate.Role, writers: dict) -> None:
     """Gap analysis, introductions, story bank and likely questions. Each result is saved and can be redone."""
     import prep
     with st.container(key="page_prep"):
@@ -330,15 +352,16 @@ def prep_page(role: candidate.Role, complete) -> None:
         miss = prep.missing_inputs(role)
         if miss:
             st.info("Add " + " and ".join(miss) + " first (Profile page, or the details of this role).")
-        if complete is None:
-            _no_login()
+        complete, agreed, wname = _pick_writer(writers, f"prep_{role.slug}")
         key = st.selectbox("Tool", [t.key for t in tools], format_func=lambda k: prep.TOOLS[k].title, key=f"tool_{role.slug}")
         tool = prep.TOOLS[key]
         st.caption(tool.help)
         saved = prep.load(role, key)
-        if st.button("Write it again" if saved else "Write it", key=f"gen_{role.slug}_{key}", disabled=bool(miss) or complete is None):
-            with st.spinner("Claude is writing. This can take a minute..."):
+        if st.button("Write it again" if saved else "Write it", key=f"gen_{role.slug}_{key}", disabled=bool(miss) or complete is None or not agreed):
+            with st.spinner(f"{'OpenAI' if wname == 'openai' else 'Claude'} is writing. This can take a minute..."):
                 ok, msg = prep.run(tool, role, complete)
+            if wname == "openai":
+                _next_round("openai_ok")                          # asks again next time
             if not ok:
                 st.error(msg)
             if ok:
@@ -351,7 +374,7 @@ def prep_page(role: candidate.Role, complete) -> None:
             st.download_button("Download as Markdown", saved, file_name=f"{role.slug}-{key}.md", key=f"dl_{role.slug}_{key}")
 
 
-def mock_page(role: candidate.Role, complete) -> None:
+def mock_page(role: candidate.Role, writers: dict) -> None:
     """A text interview, one question at a time. Voice is planned; this is a beta."""
     import mock
     import prep
@@ -359,23 +382,31 @@ def mock_page(role: candidate.Role, complete) -> None:
         st.markdown("### Mock interview, beta")
         st.caption("Text only for now. You get one question at a time, write your answer, and receive written feedback "
                    "and a stronger version of your answer. No scores.")
-        if complete is None:
-            _no_login()
         miss = prep.missing_inputs(role)
         if miss:
             st.info("Add " + " and ".join(miss) + " first.")
         key = f"mockstate_{role.slug}"
         state = S.get(key)
         if not state:
+            complete, agreed, wname = _pick_writer(writers, f"mock_{role.slug}")
             kind = st.radio("Interview type", list(mock.TYPES), horizontal=True, key=f"mocktype_{role.slug}")
-            if st.button("Start", key=f"mockstart_{role.slug}", disabled=bool(miss) or complete is None):
+            if st.button("Start", key=f"mockstart_{role.slug}", disabled=bool(miss) or complete is None or not agreed):
                 try:
                     with st.spinner("Preparing the first question..."):
                         q = mock.next_question(complete, role, kind, [])
-                    S[key] = {"kind": kind, "started": mock.now(), "items": [{"question": q}]}
+                    S[key] = {"kind": kind, "started": mock.now(), "writer": wname, "items": [{"question": q}]}
+                    if wname == "openai":
+                        _next_round("openai_ok")
                 except Exception as e:
                     st.error(f"Could not start: {e}")
                     return
+                st.rerun()
+            return
+        complete = writers.get(state.get("writer", "claude"))
+        if complete is None:
+            st.warning("The model that started this interview is no longer available. End it and start again.")
+            if st.button("End interview", key=f"mockend_gone_{role.slug}"):
+                S.pop(key, None)
                 st.rerun()
             return
         items = state["items"]

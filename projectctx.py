@@ -18,7 +18,7 @@ import settings
 from ingest import Chunk, _cid, iter_files, walk_files
 
 DEFAULT_SKIP = ["*.tex", "*.log", "*requirements*.txt", "*lock*", "*train_log*"]
-DEFAULT_CAPS = {"claude": 150_000, "gemini": 700_000}
+DEFAULT_CAPS = {"claude": 150_000, "gemini": 700_000, "openai": 400_000}
 DATA_FILES = "(data files)"
 SUMMARY_CHARS = 6000
 

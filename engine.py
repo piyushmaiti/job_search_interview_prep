@@ -169,7 +169,7 @@ class Engine:
             detail = (f"Whole project: {len(whole.files)} files, about {whole.tokens:,} tokens from {', '.join(names)}, "
                       "will be sent in one request.") if whole else ""
             if personal_out:
-                detail = (detail + " " if detail else "") + "Your CV, profile or job text is part of this request. Only Claude, or a local Ollama model, gets it without asking."
+                detail = (detail + " " if detail else "") + "Your CV, About you or job text is part of this request. Only Claude, or a local Ollama model, gets it without asking."
             approved = consent(ConsentRequest(files, options, compare=(mode == "compare"), carried=carried and not code_files,
                                               scope="whole" if whole else "snippets", detail=detail,
                                               kind="code" if (code_files or carried) else "personal"))
@@ -239,7 +239,7 @@ class Engine:
 
     def _deep(self, name: str, files: dict, update: bool, provider: str = "claude") -> bool:
         """A project too big for one request, one whose knowledge was built by a deep read, or any project read by a local model, is read in areas."""
-        cap = projectctx.caps(self.cfg)["claude"]
+        cap = projectctx.caps(self.cfg)[provider if provider in ("claude", "gemini", "openai") else "claude"]
         return provider == "ollama" or sum(f.tokens for f in files.values()) > cap or (update and deepread.has_cache(name))
 
     def _reader(self, provider: str):
@@ -252,6 +252,10 @@ class Engine:
             o = {"num_ctx": 12288, "area_tokens": 6000, "workers": 1, **(deepread.settings_for(self.cfg).get("ollama") or {})}
             runner = _Bound(p, int(o["num_ctx"]))
             return runner, {"area_tokens": int(o["area_tokens"]), "workers": int(o["workers"]), "merge_tokens": int(int(o["num_ctx"]) * 0.5)}, ""
+        if provider == "openai":
+            p = self.providers.get("openai")
+            ok, why = p.available() if p else (False, "OpenAI is not set up.")
+            return (p, {}, "") if ok else (None, {}, why)
         login = _claude_login(self.providers.get("claude"))
         ok, why = login.available() if login else (False, "")
         if not ok:
@@ -265,8 +269,8 @@ class Engine:
             return None, []
         options = options_for(self.providers)
         for o in options:
-            if o.key not in ("claude", "ollama"):
-                o.available, o.note = False, "project knowledge is read by Claude Code or an Ollama model"
+            if o.key not in ("claude", "ollama", "openai"):
+                o.available, o.note = False, "project knowledge is read by Claude Code, OpenAI or an Ollama model"
         if self._deep(name, files, update, provider):
             _r, ov, _why = self._reader(provider)
             areas, todo = deepread.plan_work(self.cfg, name, files, ov.get("area_tokens"))
@@ -279,6 +283,9 @@ class Engine:
                          else "on Ollama's servers (a :cloud model), so the code leaves this machine")
                 who = f"Ollama ({getattr(p, 'model', '')}), {where}"
                 note = "A local model is slower and less reliable than Claude on a large project. Check the result."
+            elif provider == "openai":
+                who = "OpenAI, with your API key"
+                note = "It is billed per use by OpenAI and can take a long time."
             else:
                 who = "Claude, through your Claude Code login"
                 note = "It uses a lot of your Claude plan's limit and can take a long time."
@@ -292,7 +299,8 @@ class Engine:
         else:
             send = list(files.values())
         tokens = sum(f.tokens for f in send)
-        detail = (f"{'Update' if update else 'Build'} project knowledge for {name}: Claude, through your Claude Code login, "
+        who = "OpenAI, with your API key (billed per use by OpenAI)," if provider == "openai" else "Claude, through your Claude Code login,"
+        detail = (f"{'Update' if update else 'Build'} project knowledge for {name}: {who} "
                   f"will read {len(send)} files (about {tokens:,} tokens) and write a document about them, which is kept on this machine.")
         return ConsentRequest([f"{name}/{f.rel}" for f in send], options, scope="knowledge", detail=detail), send
 
@@ -302,7 +310,7 @@ class Engine:
         provider 'claude' reads it in one request, or in areas when it is too big; 'ollama' always reads in small areas."""
         login, ov, why = self._reader(provider)
         if login is None:
-            return False, why if provider == "claude" else f"Ollama is not available. {why}"
+            return False, why if provider == "claude" else f"{'OpenAI' if provider == 'openai' else 'Ollama'} is not available. {why}"
         if name not in projectctx.project_names(self.cfg):
             return False, f"{name} is not a project in the config."
         existing = knowledge.load(name) if update else None
@@ -316,11 +324,12 @@ class Engine:
         if self._deep(name, files_now, update, provider):
             return self._deep_build(name, login, files_now, req, consent, progress, provider, ov)
         tokens = sum(f.tokens for f in send) + (knowledge.estimate_tokens(len(existing[0])) if update else 0)
-        cap = projectctx.caps(self.cfg)["claude"]
+        which = provider if provider in ("claude", "gemini", "openai") else "claude"
+        cap = projectctx.caps(self.cfg)[which]
         if tokens > cap:
-            return False, f"{name} is too large for a single pass ({tokens:,} tokens; the limit is {cap:,}). Raise whole_project.max_tokens.claude or use Explore."
+            return False, f"{name} is too large for a single pass ({tokens:,} tokens; the limit is {cap:,}). Raise whole_project.max_tokens.{which} or use Explore."
         approved = consent(req)
-        if not approved or "claude" not in approved:
+        if not approved or provider not in approved:
             return False, "Cancelled. Nothing was sent to any model."
         timeout = int(self.cfg.get("knowledge", {}).get("timeout_seconds", 1200))
         try:
@@ -333,7 +342,7 @@ class Engine:
             return False, str(e)
         text = res.text.strip()
         if not knowledge.looks_like_a_document(text):
-            return False, "Claude did not return a usable document. Nothing was saved. Try again."
+            return False, "The model did not return a usable document. Nothing was saved. Try again."
         doc, n_ok, n_bad = knowledge.verify_citations(text, files_now)
         knowledge.save(name, doc, knowledge.record(name, doc, files_now, res.model, n_ok, n_bad))
         return True, (f"{'Updated' if update else 'Built'} project knowledge for {name}: {len(files_now)} files, "
@@ -360,7 +369,7 @@ class Engine:
     # ------------------------------------------------------------ explore
     def _explore(self, question, mode, groups, names, session, consent, memory, k, res: TurnResult) -> TurnResult:
         """Claude reads a sanitized, read-only copy of the ticked projects through Claude Code. Order: check, consent, copy, ask, delete."""
-        if mode in ("gemini", "ollama", "compare"):
+        if mode in ("gemini", "openai", "ollama", "compare"):
             res.notes.append("Explore works only with Claude, through your Claude Code login. Choose Auto or Claude.")
             return res
         explorer = _explorer(self.providers.get("claude"))
