@@ -470,3 +470,53 @@ def test_the_mock_interview_with_openai_needs_a_yes_to_start():
     next(b for b in at.button if b.label == "Start").click().run()
     assert not at.exception, at.exception
     assert at.session_state[f"mockstate_{ROLE_SLUG}"]["writer"] == "openai"
+
+
+# ---------------------------------------------------------------- collapsible sides
+def _src_keys(at):
+    return [c.key for c in at.checkbox if str(c.key).startswith("src-")]
+
+
+def test_either_side_or_both_can_be_collapsed_and_shown_again():
+    at = run_app()
+    assert not at.exception, at.exception
+    assert not any(b.key in ("show_left", "show_right") for b in at.button)
+    at.button(key="hide_left").click().run()
+    assert not at.exception, at.exception
+    assert at.session_state["collapse_left"] and not at.session_state["collapse_right"]
+    assert at.button(key="show_left") and "left" in at.query_params
+    at.button(key="hide_right").click().run()
+    assert at.session_state["collapse_left"] and at.session_state["collapse_right"]
+    assert any(".st-key-side_left{display:none}" in m.value and ".st-key-side_right{display:none}" in m.value for m in at.markdown)
+    at.button(key="show_left").click().run()
+    at.button(key="show_right").click().run()
+    assert not at.session_state["collapse_left"] and not at.session_state["collapse_right"]
+    assert "left" not in at.query_params and "right" not in at.query_params
+
+
+def test_collapsing_the_sources_keeps_what_was_ticked():
+    at = run_app()
+    keys = _src_keys(at)
+    assert keys
+    at.checkbox(key=keys[0]).uncheck().run()
+    at.button(key="hide_left").click().run()
+    at.button(key="show_left").click().run()
+    assert at.checkbox(key=keys[0]).value is False
+    assert keys[0].removeprefix("src-") not in at.session_state["selected"]
+
+
+def test_the_address_sets_which_sides_start_collapsed():
+    at = AppTest.from_file(APP, default_timeout=120)
+    at.session_state["demo"] = True
+    at.session_state["view"] = ROLE_SLUG
+    at.query_params["right"] = "0"
+    at.run()
+    assert not at.exception, at.exception
+    assert at.session_state["collapse_right"] and not at.session_state["collapse_left"]
+
+
+def test_every_settings_model_dropdown_has_help_text():
+    at = run_app()
+    for label in ("Claude access", "Claude model", "Gemini model", "OpenAI model", "Ollama model"):
+        box = next(s for s in at.selectbox if s.label == label)
+        assert box.help, f"{label} has no help text"

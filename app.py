@@ -170,6 +170,15 @@ def set_sources(values: dict):
         S[key] = value
 
 
+def toggle_side(name: str):
+    """Collapse or show the Sources (left) or Evidence (right) section. The choice is kept in the page address, so a reload keeps it."""
+    S[f"collapse_{name}"] = not S.get(f"collapse_{name}", False)
+    if S[f"collapse_{name}"]:
+        st.query_params[name] = "0"
+    elif name in st.query_params:
+        del st.query_params[name]
+
+
 def set_theme():
     S.theme = "Night" if S.theme_sw else "Morning"
 
@@ -671,13 +680,24 @@ if mode == "Mock interview":
     prep_ui.mock_page(role, writers)
     st.stop()
 
-left, mid, right = st.columns([1.05, 2.5, 1.25], gap="medium")
+for _n in ("left", "right"):
+    S.setdefault(f"collapse_{_n}", st.query_params.get(_n) == "0")
+cl, cr = S.collapse_left, S.collapse_right
+# A collapsed section keeps its place as a thin strip, and the conversation column takes the room it frees.
+_wl, _wr = (0.14 if cl else 1.05), (0.14 if cr else 1.25)
+left, mid, right = st.columns([_wl, 4.8 - _wl - _wr, _wr], gap="medium")
+st.markdown("<style>" + (".st-key-side_left{display:none}" if cl else "") + (".st-key-side_right{display:none}" if cr else "") + "</style>",
+            unsafe_allow_html=True)                  # the sections are still drawn (so ticked sources are kept) but hidden
 
 # ---- left: sources
 with left:
+    if cl:
+        st.button("", key="show_left", icon=":material/chevron_right:", type="tertiary", help="Show Sources", on_click=toggle_side, args=("left",))
     with st.container(key="side_left"):
         with st.container(border=True):
-            st.markdown("### Sources")
+            _t, _b = st.columns([5, 1], vertical_alignment="center")
+            _t.markdown("### Sources")
+            _b.button("", key="hide_left", icon=":material/chevron_left:", type="tertiary", help="Hide Sources", on_click=toggle_side, args=("left",))
             groups = {g: i for g, i in index.groups().items() if candidate.visible(g, ROLE)}
             docs = sorted(g for g, i in groups.items() if i["kind"] == "local")
             projs = [p["name"] for p in cfg["projects"] if p["name"] in groups]
@@ -886,12 +906,16 @@ with left:
             st.markdown("### Settings")
             ACCESS = {"auto": "Auto: login, API key only for web search", "login": "Login only (claude -p, no API key)", "api": "API key only (billed per use)"}
             st.selectbox("Claude access", list(ACCESS), index=list(ACCESS).index(cfg["models"].get("claude_access", "auto")),
-                         format_func=ACCESS.get, key="claude_access")
-            st.selectbox("Claude model", CLAUDE_MODELS, index=CLAUDE_MODELS.index(cfg["models"]["claude"]) if cfg["models"]["claude"] in CLAUDE_MODELS else 0, key="claude_model")
-            st.selectbox("Gemini model", GEMINI_MODELS, index=GEMINI_MODELS.index(cfg["models"]["gemini"]) if cfg["models"]["gemini"] in GEMINI_MODELS else 0, key="gemini_model")
+                         format_func=ACCESS.get, key="claude_access",
+                         help="Auto uses your Claude Code login and an API key only for web search. Login only never uses a key. API key only needs ANTHROPIC_API_KEY in .env and is billed per use by Anthropic.")
+            st.selectbox("Claude model", CLAUDE_MODELS, index=CLAUDE_MODELS.index(cfg["models"]["claude"]) if cfg["models"]["claude"] in CLAUDE_MODELS else 0, key="claude_model",
+                         help="Which Claude model answers. It runs through your Claude Code login unless you chose API key above.")
+            st.selectbox("Gemini model", GEMINI_MODELS, index=GEMINI_MODELS.index(cfg["models"]["gemini"]) if cfg["models"]["gemini"] in GEMINI_MODELS else 0, key="gemini_model",
+                         help="Needs GEMINI_API_KEY in .env. Billed per use by Google. Visuals (images) in answers need it.")
             st.selectbox("OpenAI model", OPENAI_MODELS, index=OPENAI_MODELS.index(cfg["models"].get("openai")) if cfg["models"].get("openai") in OPENAI_MODELS else 0, key="openai_model",
                          help="Needs OPENAI_API_KEY in .env. Billed per use by OpenAI. Auto never picks it; choose OpenAI in the model switch.")
-            st.selectbox("Ollama model", installed_models() or ["(none installed)"], key="ollama_model")
+            st.selectbox("Ollama model", installed_models() or ["(none installed)"], key="ollama_model",
+                         help="Runs on your own machine through Ollama; needs no key and sends nothing to a provider. Only models you have installed are listed.")
             st.checkbox("Use offline demo models (no keys, no network; answers are placeholders)", value=False, key="demo")
             for k, p in eng.providers.items():
                 ok, why = p.available()
@@ -901,9 +925,13 @@ with left:
 
 # ---- right: evidence
 with right:
+    if cr:
+        st.button("", key="show_right", icon=":material/chevron_left:", type="tertiary", help="Show Evidence", on_click=toggle_side, args=("right",))
     with st.container(key="side_right"):
         with st.container(border=True):
-            st.markdown("### Evidence")
+            _t, _b = st.columns([5, 1], vertical_alignment="center")
+            _t.markdown("### Evidence")
+            _b.button("", key="hide_right", icon=":material/chevron_right:", type="tertiary", help="Hide Evidence", on_click=toggle_side, args=("right",))
             show_evidence(chunk_by_id)
             st.markdown('<div class="flow"></div>', unsafe_allow_html=True)
             st.caption("Tags: local = your papers and notes · code = project files · web = a page the model searched · dashed = the model's own knowledge, unchecked.")
