@@ -24,6 +24,12 @@ It runs on your own computer. Your documents stay in a folder here, and nothing 
 
 ![A role's Research page](docs/screenshot-role.png)
 
+<p>
+<img src="docs/screenshot-phone-conversation.png" width="250" alt="On a phone: the conversation, with a tab on each edge and a down arrow">
+<img src="docs/screenshot-phone-sources.png" width="250" alt="On a phone: the Sources panel opened from the left edge">
+<img src="docs/screenshot-phone-evidence.png" width="250" alt="On a phone: the Evidence panel opened from the right edge">
+</p>
+
 These screenshots use made-up sample data and the offline demo mode.
 
 ## ✨ Features

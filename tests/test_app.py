@@ -639,3 +639,43 @@ def test_a_formula_with_a_citation_mark_inside_is_shown_in_one_piece():
     body = next(m.value for m in at.markdown if "The loss is" in m.value)
     assert "$L = a + b$" in body and "\\$120k" in body
     assert body.index("$L = a + b$") < body.index("chip")
+
+
+# ---------------------------------------------------------------- phone layout: panels from the edges and a down arrow
+def _css(at):
+    return "\n".join(m.value for m in at.markdown if "<style>" in m.value)
+
+
+def test_on_a_phone_sources_and_evidence_are_panels_opened_from_the_edges_one_at_a_time():
+    at = run_app()
+    assert not at.exception, at.exception
+    assert "translateX(-110%)" in _css(at) and "translateX(110%)" in _css(at), "both panels start closed"
+    at.button(key="m_open_left").click().run()
+    assert at.session_state["m_left"] and not at.session_state["m_right"]
+    assert "translateX(0)" in _css(at), "the Sources panel is slid in"
+    at.button(key="m_open_right").click().run()
+    assert at.session_state["m_right"] and not at.session_state["m_left"], "opening one closes the other"
+    at.button(key="m_close_right").click().run()
+    assert not at.session_state["m_right"]
+
+
+def test_tapping_a_citation_mark_opens_the_evidence_panel_on_a_phone():
+    at = _ask(run_app())
+    mark = next(b for b in at.button if str(b.key).startswith("cite_"))
+    mark.click().run()
+    assert at.session_state["m_right"] and not at.session_state["m_left"]
+
+
+def test_the_page_has_a_down_arrow_that_leads_to_the_end_of_the_conversation():
+    at = run_app()
+    html = "\n".join(m.value for m in at.markdown)
+    assert 'class="to-bottom" href="#chat-end"' in html and 'id="chat-end"' in html
+
+
+def test_the_desktop_collapse_rules_only_apply_on_wide_screens_and_the_phone_rules_leave_wide_screens_alone():
+    at = run_app()
+    at.button(key="hide_left").click().run()
+    css = _css(at)
+    assert "@media (min-width:901px){.st-key-side_left{display:none}" in css
+    assert "@media (min-width:901px){.st-key-m_open_left" in css, "the phone buttons are hidden on wide screens"
+    assert css.index("@media (max-width:900px)") > css.index("@media (min-width:901px)")

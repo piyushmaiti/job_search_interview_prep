@@ -249,7 +249,7 @@ def list_roles() -> list[Role]:
     if not d.is_dir():
         return []
     roles = [r for r in (get_role(p.name) for p in d.iterdir() if p.is_dir()) if r]
-    return sorted(roles, key=lambda r: r.created)
+    return sorted(roles, key=lambda r: (r.created, r.slug))      # two roles made in the same millisecond keep a fixed order
 
 
 def _save_texts(role: Role, jd: str, intent: str) -> None:

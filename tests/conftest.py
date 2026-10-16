@@ -47,6 +47,15 @@ def engine(cfg, chunks, providers):
 
 
 @pytest.fixture(autouse=True)
+def _no_real_keys_or_passcode(monkeypatch):
+    """Tests never read your real .env or terminal keys, so a passcode or API key you added does not change what they see."""
+    for name in settings.KEY_NAMES | {"INTERVIEW_PREP_LAN"}:
+        monkeypatch.delenv(name, raising=False)
+    real = settings.load_dotenv
+    monkeypatch.setattr(settings, "load_dotenv", lambda path=None: real(path) if path else None)
+
+
+@pytest.fixture(autouse=True)
 def _isolated_sessions_and_outputs(monkeypatch):
     monkeypatch.setattr(settings, "LOCAL_CONFIG", settings.TOOL_DIR / ".test_scratch" / "no_local_config.yaml")
     """Tests write to a scratch folder inside this folder, never to the real sessions/ or outputs/."""

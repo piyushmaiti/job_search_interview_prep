@@ -180,6 +180,39 @@ def toggle_side(name: str):
         del st.query_params[name]
 
 
+def toggle_panel(name: str):
+    """Phone view: open or close the Sources (left) or Evidence (right) panel. Only one is open at a time."""
+    S[f"m_{name}"] = not S.get(f"m_{name}", False)
+    if S[f"m_{name}"]:
+        S["m_right" if name == "left" else "m_left"] = False
+
+
+def mobile_css(open_left: bool, open_right: bool) -> str:
+    """On a phone the Sources and Evidence sections become panels that slide in from the left and right edges, so the conversation
+    has the whole width. Wider screens are not affected: the three columns and their collapse arrows stay as they are."""
+    drawer = ("position:fixed !important; top:0; bottom:0; width:min(88vw,420px); height:100dvh; max-height:none !important; overflow-y:auto !important; "
+              "overflow-x:hidden !important; z-index:1000000; background:var(--bg); padding:3.4rem 1rem 6rem; box-shadow:0 0 28px rgba(0,0,0,.35); "
+              "transition:transform .22s ease, visibility .22s;")
+    return (
+        "@media (min-width:901px){.st-key-m_open_left,.st-key-m_open_right,.st-key-m_close_left,.st-key-m_close_right,.to-bottom{display:none !important}}"
+        "@media (max-width:900px){"
+        "html{scroll-behavior:smooth}"
+        ".st-key-hide_left,.st-key-hide_right,.st-key-show_left,.st-key-show_right{display:none !important}"
+        f'[data-testid="stColumn"]:has(.st-key-side_left){{{drawer} left:0; transform:translateX({"0" if open_left else "-110%"}); visibility:{"visible" if open_left else "hidden"};}}'
+        f'[data-testid="stColumn"]:has(.st-key-side_right){{{drawer} right:0; transform:translateX({"0" if open_right else "110%"}); visibility:{"visible" if open_right else "hidden"};}}'
+        '[data-testid="stColumn"]:has(.st-key-side_mid){flex:1 1 100% !important; width:100% !important; min-width:100% !important; order:0 !important}'
+        ".st-key-m_open_left{position:fixed !important; left:0; top:42%; z-index:900; width:auto !important}"
+        ".st-key-m_open_right{position:fixed !important; right:0; top:42%; z-index:900; width:auto !important}"
+        ".st-key-m_open_left button,.st-key-m_open_right button{background:var(--panel) !important; border:1px solid var(--line) !important; min-height:3.4rem; padding:0 .15rem !important; opacity:.92}"
+        ".st-key-m_open_left button{border-radius:0 12px 12px 0 !important}"
+        ".st-key-m_open_right button{border-radius:12px 0 0 12px !important}"
+        ".to-bottom{position:fixed; right:14px; bottom:18px; width:46px; height:46px; border-radius:50%; background:var(--panel); border:1px solid var(--line); "
+        "display:flex; align-items:center; justify-content:center; z-index:900; color:var(--fg); box-shadow:0 2px 10px rgba(0,0,0,.25)}"
+        ".to-bottom, .to-bottom:visited, .to-bottom:hover{color:var(--fg) !important; text-decoration:none !important}"
+        ".to-bottom svg{width:22px; height:22px}"
+        "}")
+
+
 def set_theme():
     S.theme = "Night" if S.theme_sw else "Morning"
 
@@ -245,6 +278,8 @@ input, textarea, [data-baseweb="select"] div {{ color: var(--fg) !important; }}
 [data-testid="stFileUploaderDropzone"] * {{ color: var(--fg); }}
 [data-testid="stDialog"] div[role="dialog"], [data-baseweb="modal"] > div > div, [data-testid="stTooltipContent"], [data-baseweb="tooltip"] > div {{ background: var(--bg2) !important; color: var(--fg) !important; }}
 [data-testid="stDialog"] *, [data-testid="stTooltipContent"] * {{ color: var(--fg); }}
+[data-testid="stPopover"] > button, [data-testid="stPopoverButton"] {{ background: var(--panel) !important; border: 1px solid var(--line) !important; color: var(--fg) !important; }}
+[data-testid="stPopover"] > button *, [data-testid="stPopoverButton"] * {{ color: var(--fg) !important; }}
 [data-testid="stPopoverBody"], [data-baseweb="popover"] > div {{ background: var(--bg2) !important; color: var(--fg) !important; border: 1px solid var(--line) !important; }}
 [data-testid="stPopoverBody"] *:not(button *) {{ color: var(--fg); }}
 [data-testid="stPopoverBody"] [data-testid="stCaptionContainer"] * {{ color: var(--fg); opacity: .8; }}
@@ -421,6 +456,7 @@ def same_mark(a: dict | None, b: dict) -> bool:
 
 def pick_evidence(seg: dict):
     S.evidence = seg  # runs before the rerun, so the right column already shows it
+    S.m_right, S.m_left = True, False             # on a phone, the Evidence panel opens
 
 
 def to_view(res: TurnResult) -> dict:
@@ -738,7 +774,8 @@ cl, cr = S.collapse_left, S.collapse_right
 # A collapsed section keeps its place as a thin strip, and the conversation column takes the room it frees.
 _wl, _wr = (0.14 if cl else 1.05), (0.14 if cr else 1.25)
 left, mid, right = st.columns([_wl, 4.8 - _wl - _wr, _wr], gap="medium")
-st.markdown("<style>" + (".st-key-side_left{display:none}" if cl else "") + (".st-key-side_right{display:none}" if cr else "") + "</style>",
+st.markdown("<style>@media (min-width:901px){" + (".st-key-side_left{display:none}" if cl else "") + (".st-key-side_right{display:none}" if cr else "") + "}\n"
+            + mobile_css(S.get("m_left", False), S.get("m_right", False)) + "</style>",
             unsafe_allow_html=True)                  # the sections are still drawn (so ticked sources are kept) but hidden
 
 # ---- left: sources
@@ -750,6 +787,7 @@ with left:
             _t, _b = st.columns([5, 1], vertical_alignment="center")
             _t.markdown("### Sources")
             _b.button("", key="hide_left", icon=":material/chevron_left:", type="tertiary", help="Hide Sources", on_click=toggle_side, args=("left",))
+            _b.button("", key="m_close_left", icon=":material/chevron_left:", type="tertiary", help="Close Sources", on_click=toggle_panel, args=("left",))
             groups = {g: i for g, i in index.groups().items() if candidate.visible(g, ROLE)}
             docs = sorted(g for g, i in groups.items() if i["kind"] == "local")
             projs = [p["name"] for p in cfg["projects"] if p["name"] in groups]
@@ -984,12 +1022,18 @@ with right:
             _t, _b = st.columns([5, 1], vertical_alignment="center")
             _t.markdown("### Evidence")
             _b.button("", key="hide_right", icon=":material/chevron_right:", type="tertiary", help="Hide Evidence", on_click=toggle_side, args=("right",))
+            _b.button("", key="m_close_right", icon=":material/chevron_right:", type="tertiary", help="Close Evidence", on_click=toggle_panel, args=("right",))
             show_evidence(chunk_by_id)
             st.markdown('<div class="flow"></div>', unsafe_allow_html=True)
             st.caption("Tags: local = your papers and notes · code = project files · web = a page the model searched · dashed = the model's own knowledge, unchecked.")
 
 # ---- middle: conversation
 with mid:
+    st.button("", key="m_open_left", icon=":material/chevron_right:", type="tertiary", help="Show Sources", on_click=toggle_panel, args=("left",))
+    st.button("", key="m_open_right", icon=":material/chevron_left:", type="tertiary", help="Show Evidence", on_click=toggle_panel, args=("right",))
+    st.markdown('<a class="to-bottom" href="#chat-end" aria-label="Go to the bottom of the conversation" title="Go to the bottom">'
+                '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></a>',
+                unsafe_allow_html=True)
     with st.container(key="side_mid"):
         with st.container(border=True):
             with st.container(key="convbar"):          # stays in view while a long chat scrolls
@@ -1048,3 +1092,5 @@ with mid:
                         S.views[regen]["notes"] = S.views[regen]["notes"] + (res.notes or ["Nothing was sent."])
                     S.pending, S.consent_answer = None, None   # the choice is never remembered
                     st.rerun()
+
+    st.markdown('<div id="chat-end"></div>', unsafe_allow_html=True)       # the down arrow on a phone goes here
