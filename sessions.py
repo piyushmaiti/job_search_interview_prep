@@ -87,3 +87,10 @@ class Session:
             if t.image:
                 out += [f"Image: {t.image}", ""]
         return "\n".join(out)
+
+
+class Replay(Session):
+    """The chat as it was before one turn, used to answer that turn again with another model. It is never written to disk."""
+
+    def save(self) -> Path:
+        return Path()

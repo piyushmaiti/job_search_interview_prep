@@ -520,3 +520,122 @@ def test_every_settings_model_dropdown_has_help_text():
     for label in ("Claude access", "Claude model", "Gemini model", "OpenAI model", "Ollama model"):
         box = next(s for s in at.selectbox if s.label == label)
         assert box.help, f"{label} has no help text"
+
+
+# ---------------------------------------------------------------- saved items, answering again, formulas
+def _ask(at, q="How do citations work in the library notes?"):
+    at.chat_input[0].set_value(q).run()
+    assert not at.exception, at.exception
+    return at
+
+
+def test_a_research_answer_is_saved_only_when_asked_and_listed_and_deleted_after_a_confirm():
+    import saved
+    at = _ask(run_app())
+    role = candidate.get_role(ROLE_SLUG)
+    assert saved.items(role, "research") == [], "nothing is kept without pressing Save"
+    at.button(key="save_0").click().run()
+    assert not at.exception, at.exception
+    items = saved.items(role, "research")
+    assert len(items) == 1 and items[0]["question"].startswith("How do citations") and items[0]["answers"]
+    assert at.button(key="save_0").label == "Saved" and at.button(key="save_0").disabled
+    assert any(e.label == "Saved (1)" for e in at.expander)
+    at.button(key=f"sv_del_{items[0]['id']}").click().run()
+    assert saved.items(role, "research"), "the first press only asks"
+    at.button(key=f"sv_no_{items[0]['id']}").click().run()
+    assert saved.items(role, "research")
+    at.button(key=f"sv_del_{items[0]['id']}").click().run()
+    at.button(key=f"sv_yes_{items[0]['id']}").click().run()
+    assert saved.items(role, "research") == []
+
+
+def test_saved_items_belong_to_the_role_they_were_asked_in():
+    import saved
+    at = _ask(run_app())
+    at.button(key="save_0").click().run()
+    other = candidate.create_role("Other role", "Beta", "Academic", "A postdoc.", "Show papers.", use_main_cv=True)
+    assert saved.items(other, "research") == []
+    candidate.delete_role(other.slug)
+
+
+def _answer_again(at, model):
+    """Pick a model under an answer and press Answer again. Your CV is part of the request, so a provider other than Claude or a
+    local model asks first; the test gives that yes."""
+    at.radio(key="regen_model_0").set_value(model)
+    at.button(key="regen_go_0").click().run()
+    assert not at.exception, at.exception
+    if at.session_state["pending"] is not None:
+        assert at.session_state["pending"]["regen"] == 0 and at.session_state["pending"]["mode"] == model
+        at.session_state["consent_answer"] = {"id": at.session_state["pending"]["id"], "providers": [model]}
+        at.run()
+    assert not at.exception, at.exception
+
+
+def test_try_another_model_adds_a_second_answer_and_keeps_the_first_and_the_chat_memory():
+    at = _ask(run_app())
+    first = at.session_state["views"][0]["answers"][0]["provider"]
+    n_turns = len(at.session_state["session"].turns)
+    _answer_again(at, "gemini")
+    v = at.session_state["views"][0]
+    assert len(v["answers"]) == 2 and v["answers"][0]["provider"] == first and v["answers"][1]["provider"] == "gemini"
+    assert len(at.session_state["views"]) == 1, "it joins the same question, it is not a new one"
+    assert len(at.session_state["session"].turns) == n_turns, "chat memory is unchanged"
+    assert len(at.session_state["session"].turns[0].answers) == 2, "the saved chat file gets the new answer too"
+    assert at.session_state["pending"] is None
+
+
+def test_saving_after_answering_again_keeps_both_answers():
+    import saved
+    at = _ask(run_app())
+    _answer_again(at, "openai")
+    at.button(key="save_0").click().run()
+    item = saved.items(candidate.get_role(ROLE_SLUG), "research")[0]
+    assert [a["provider"] for a in item["answers"]] == [at.session_state["views"][0]["answers"][0]["provider"], "openai"]
+
+
+def test_try_another_model_still_asks_before_sending_project_code():
+    at = run_app()
+    at.session_state["selected"] = {"sample_project"}
+    at.checkbox(key="src-sample_project").check().run()
+    at.chat_input[0].set_value("What does vae_loss do?").run()
+    assert at.session_state["pending"] is not None, "code is never sent without a choice of provider"
+    at.session_state["pending"] = None
+    at.session_state["consent_answer"] = None
+    at.session_state["views"] = [{"question": "What does vae_loss do?", "route": "", "notes": [], "cancelled": False, "image": None,
+                                  "answers": [{"provider": "claude", "model": "m", "error": None, "segments": [{"kind": "text", "text": "It adds KL."}]}]}]
+    at.run()
+    at.radio(key="regen_model_0").set_value("gemini")
+    at.button(key="regen_go_0").click().run()
+    assert at.session_state["pending"]["regen"] == 0 and len(at.session_state["views"][0]["answers"]) == 1, "nothing was sent yet"
+
+
+def test_a_mock_question_with_its_answer_and_feedback_can_be_saved_and_deleted():
+    import saved
+    at = run_app()
+    at.session_state[f"mode_{ROLE_SLUG}"] = "Mock interview"
+    at.run()
+    next(b for b in at.button if b.label == "Start").click().run()
+    at.text_area(key=f"mockans_{ROLE_SLUG}_1").set_value("I learned PyTorch for a project.").run()
+    next(b for b in at.button if b.label == "Get feedback").click().run()
+    role = candidate.get_role(ROLE_SLUG)
+    assert saved.items(role, "mock") == []
+    at.button(key=f"mocksave_{ROLE_SLUG}_1").click().run()
+    assert not at.exception, at.exception
+    (item,) = saved.items(role, "mock")
+    assert item["answer"] == "I learned PyTorch for a project." and "A stronger version" in item["feedback"] and item["question"]
+    assert at.button(key=f"mocksave_{ROLE_SLUG}_1").disabled
+    at.button(key=f"sv_del_{item['id']}").click().run()
+    at.button(key=f"sv_yes_{item['id']}").click().run()
+    assert saved.items(role, "mock") == []
+
+
+def test_a_formula_with_a_citation_mark_inside_is_shown_in_one_piece():
+    at = run_app()
+    at.session_state["views"] = [{"question": "q", "route": "", "notes": [], "cancelled": False, "image": None, "answers": [
+        {"provider": "claude", "model": "m", "error": None, "segments": [
+            {"kind": "text", "text": r"The loss is \(L = a"}, {"kind": "model", "text": "model"}, {"kind": "text", "text": r" + b\) and costs $120k."}]}]}]
+    at.run()
+    assert not at.exception, at.exception
+    body = next(m.value for m in at.markdown if "The loss is" in m.value)
+    assert "$L = a + b$" in body and "\\$120k" in body
+    assert body.index("$L = a + b$") < body.index("chip")
