@@ -21,7 +21,7 @@ import settings
 
 settings.setup_env()
 
-from consent import ConsentRequest                     # noqa: E402
+from consent import ConsentRequest, dialog_title, included_line, settings_line                     # noqa: E402
 from engine import Engine, TurnResult, _claude_login   # noqa: E402
 import candidate
 import projects
@@ -586,8 +586,11 @@ def show_evidence(chunk_by_id: dict):
         st.markdown(f"> {c.text[:1800]}")
 
 
-@st.dialog("This question will send project code to a model")
-def consent_dialog(req: ConsentRequest):
+def _consent_body(req: ConsentRequest, choice: str, label: str):
+    inc = included_line(req)
+    if inc:
+        st.markdown(f"**{inc}**")
+    st.caption(settings_line(choice, label))
     st.write("Files that would be sent:")
     if req.detail:
         st.info(req.detail)
@@ -609,6 +612,17 @@ def consent_dialog(req: ConsentRequest):
     if c2.button("Cancel, send nothing", use_container_width=True):
         S.consent_answer = {"id": S.pending["id"], "providers": []}
         st.rerun()
+
+
+def consent_dialog(req: ConsentRequest, choice: str = ""):
+    """The title is fixed when a dialog is defined, so one dialog is defined for the title this request needs."""
+    p = eng.providers.get(choice)
+    label = p.label() if p else ""
+
+    @st.dialog(dialog_title(req))
+    def show():
+        _consent_body(req, choice, label)
+    show()
 
 
 @st.dialog("Project knowledge", width="large")
@@ -865,7 +879,7 @@ with left:
                         done, msg = S.pop("proj_msg")
                         (st.success if done else st.error)(msg)
                     st.caption("The folder is only read, never changed, and nothing is sent anywhere when you add it. "
-                               "Each question that would send code asks which provider may receive it.")
+                               "Each question that would send code, or your CV and job text to a model other than Claude, asks which provider may receive it.")
                     pj_path = st.text_input("Folder", placeholder="~/code/my_project", key=f"proj_path_{S.proj_round}")
                     pj_name = st.text_input("Name (optional)", placeholder="defaults to the folder name", key=f"proj_name_{S.proj_round}")
                     if st.button("Check folder", key="proj-check", use_container_width=True, disabled=not pj_path.strip()):
@@ -1076,7 +1090,7 @@ with mid:
                                       use_knowledge=S.get("use_knowledge", True),
                                       session=replay if regen is not None else S.session, consent=ui_consent)
                 except NeedConsent as nc:
-                    consent_dialog(nc.req)      # nothing has been sent; the dialog decides what happens next
+                    consent_dialog(nc.req, p.get("mode") or mode)      # nothing has been sent; the dialog decides what happens next
                 else:
                     if regen is None:
                         S.views.append(to_view(res))

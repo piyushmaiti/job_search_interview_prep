@@ -679,3 +679,30 @@ def test_the_desktop_collapse_rules_only_apply_on_wide_screens_and_the_phone_rul
     assert "@media (min-width:901px){.st-key-side_left{display:none}" in css
     assert "@media (min-width:901px){.st-key-m_open_left" in css, "the phone buttons are hidden on wide screens"
     assert css.index("@media (max-width:900px)") > css.index("@media (min-width:901px)")
+
+
+def test_code_dialog_says_project_code_is_included_and_names_the_settings_choice():
+    at = ask_code_question()
+    assert not at.exception, at.exception
+    texts = [m.value for m in at.markdown] + [c.value for c in at.caption]
+    assert any(t.startswith("**Included: project code") for t in texts), texts
+    assert any("Your model choice in Settings is" in t for t in texts), texts
+
+
+def test_cv_going_to_openai_asks_and_the_dialog_says_it_is_the_cv():
+    at = run_app()
+    at.radio(key="mode").set_value("openai").run()
+    at.chat_input[0].set_value("How do citations work in the library notes?").run()
+    assert not at.exception, at.exception
+    assert at.session_state["pending"] is not None and not at.session_state["views"], "must wait for the user's choice"
+    texts = [m.value for m in at.markdown] + [c.value for c in at.caption]
+    assert any(t.startswith("**Included: your CV") for t in texts), texts
+    assert any("openai" in t and "Your model choice in Settings is" in t for t in texts), texts
+
+
+def test_cv_going_to_claude_does_not_ask():
+    at = run_app()
+    at.radio(key="mode").set_value("claude").run()
+    at.chat_input[0].set_value("How do citations work in the library notes?").run()
+    assert not at.exception, at.exception
+    assert at.session_state["pending"] is None
