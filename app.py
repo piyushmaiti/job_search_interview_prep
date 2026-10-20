@@ -21,6 +21,7 @@ import settings
 
 settings.setup_env()
 
+from jobs import Job                                   # noqa: E402
 from consent import ConsentRequest, dialog_title, included_line, settings_line                     # noqa: E402
 from engine import Engine, TurnResult, _claude_login   # noqa: E402
 import candidate
@@ -390,12 +391,30 @@ class NeedConsent(Exception):
         self.req = req
 
 
-def ui_consent(req: ConsentRequest):
-    """Raise until the user has chosen in the dialog. The answer is tied to the pending question and used once."""
+def start_job(p: dict, mode: str, web: bool, memory: bool, replay) -> Job:
+    """Runs the pending question in the background. The consent answer is read here, on the page, and handed over."""
     ans = S.get("consent_answer")
-    if not ans or ans.get("id") != S.pending["id"]:
-        raise NeedConsent(req)
-    return ans["providers"] or None
+    chosen = (ans["providers"] or None) if ans and ans.get("id") == p["id"] else False
+
+    def consent(req: ConsentRequest):
+        if chosen is False:
+            raise NeedConsent(req)      # nothing has been sent; the page shows the dialog
+        return chosen
+
+    kw = dict(mode=p.get("mode") or mode, web=web, memory=memory, groups=set(S.selected or ()),
+              code_mode={"Whole project": "whole", "Explore": "explore"}.get(S.get("code_depth"), "retrieve"),
+              use_knowledge=S.get("use_knowledge", True),
+              session=replay if p.get("regen") is not None else S.session, consent=consent)
+    return Job(p["id"], lambda cancel: eng.ask(p["q"], cancel=cancel, **kw))
+
+
+def stop_request():
+    """The Stop button: drop the running question. Its answer is never shown, saved or remembered."""
+    job = S.get("job")
+    if job is not None:
+        job.stop()
+    S.job, S.pending, S.consent_answer = None, None, None
+    S.stopped_note = "Stopped. The question may already have reached the model. Stopping only discards the answer; it cannot take the question back."
 
 
 # ------------------------------------------------------------------ rendering helpers
@@ -1066,6 +1085,8 @@ with mid:
 
             if not S.selected:
                 st.info("No sources are ticked, so answers come from the model's own knowledge only. Tick sources on the left to search your files.")
+            if S.get("stopped_note"):
+                st.info(S.pop("stopped_note"))
             q = st.chat_input("Ask about your experience, this role, your papers or code. Say 'make an infographic of...' for a visual.")
             if q and not S.pending:
                 S.pending = {"id": f"{time.time():.3f}", "q": q}
@@ -1083,15 +1104,26 @@ with mid:
                     st.markdown(f'<div class="note">Answering again with {html.escape(p["mode"])}.</div>', unsafe_allow_html=True)
                 ti = turn_index(regen) if regen is not None else 0
                 replay = Replay(id=S.session.id, turns=list(S.session.turns[:ti]), role=ROLE) if regen is not None else None
-                try:
-                    with st.spinner("Exploring the project (this can take a few minutes)..." if S.get("code_depth") == "Explore" else "Thinking..."):
-                        res = eng.ask(p["q"], mode=p.get("mode") or mode, web=web, memory=memory, groups=set(S.selected or ()),
-                                      code_mode={"Whole project": "whole", "Explore": "explore"}.get(S.get("code_depth"), "retrieve"),
-                                      use_knowledge=S.get("use_knowledge", True),
-                                      session=replay if regen is not None else S.session, consent=ui_consent)
-                except NeedConsent as nc:
-                    consent_dialog(nc.req, p.get("mode") or mode)      # nothing has been sent; the dialog decides what happens next
+                job = S.get("job")
+                if job is not None and job.id != p["id"]:
+                    job.stop()
+                    job = S.job = None
+                if job is None:
+                    job = S.job = start_job(p, mode, web, memory, replay)
+                st.button("Stop", key="stop_request", on_click=stop_request,
+                          help="Stop waiting. The answer is discarded. A question already sent to a model cannot be taken back.")
+                tick = st.empty()
+                with st.spinner("Exploring the project (this can take a few minutes)..." if S.get("code_depth") == "Explore" else "Thinking..."):
+                    while not job.done():
+                        time.sleep(0.2)
+                        tick.empty()            # lets a click on Stop interrupt this wait
+                S.job = None
+                if isinstance(job.error, NeedConsent):
+                    consent_dialog(job.error.req, p.get("mode") or mode)      # nothing has been sent; the dialog decides what happens next
                 else:
+                    if job.error is not None:
+                        raise job.error
+                    res = job.result
                     if regen is None:
                         S.views.append(to_view(res))
                     elif res.answers:

@@ -87,7 +87,9 @@ class Engine:
     def ask(self, question: str, mode: str | None = None, web: bool | None = None,
             groups: set[str] | None = None, session: Session | None = None,
             consent: ConsentFn = cli_consent, memory: bool | None = None, k: int | None = None,
-            code_mode: str = "retrieve", use_knowledge: bool | None = None) -> TurnResult:
+            code_mode: str = "retrieve", use_knowledge: bool | None = None, cancel=None) -> TurnResult:
+        """cancel is an optional threading.Event. Once set, the answer is discarded: nothing is saved, and no image is drawn.
+        A model call that has already started cannot be recalled."""
         mode = mode or self.cfg.get("default_mode", "auto")
         web = self.cfg["web"]["default"] if web is None else web
         memory = self.cfg["chat"]["memory"] if memory is None else memory
@@ -100,7 +102,7 @@ class Engine:
         if code_mode == "explore":
             names = [n for n in projectctx.project_names(self.cfg) if n in groups]
             if names and not is_image_request(question):
-                return self._explore(question, mode, groups, names, session, consent, memory, k, res)
+                return self._explore(question, mode, groups, names, session, consent, memory, k, res, cancel)
             res.notes.append("Explore needs a project ticked in Sources, so normal retrieval was used." if not names
                              else "Image requests use normal retrieval, so explore was skipped.")
             names = []
@@ -186,6 +188,9 @@ class Engine:
                 res.notes.append("Image skipped: Gemini was not approved for this code.")
         res.used_code = res.used_code or carried
 
+        if cancel is not None and cancel.is_set():
+            return self._stopped(res)
+
         # ---- call the approved providers (in parallel when comparing)
         def run(name: str) -> AnswerOut:
             p = self.providers[name]
@@ -203,6 +208,9 @@ class Engine:
                 res.answers = list(ex.map(run, providers))
         else:
             res.answers = [run(n) for n in providers]
+
+        if cancel is not None and cancel.is_set():
+            return self._stopped(res)
 
         # ---- optional infographic
         first_ok = next((a for a in res.answers if not a.error), None)
@@ -367,7 +375,12 @@ class Engine:
                       f"{knowledge.estimate_tokens(len(doc)):,} tokens. {n_ok} citations checked against the code, {n_bad} unverified.")
 
     # ------------------------------------------------------------ explore
-    def _explore(self, question, mode, groups, names, session, consent, memory, k, res: TurnResult) -> TurnResult:
+    def _stopped(self, res: TurnResult) -> TurnResult:
+        res.cancelled, res.answers, res.image_path = True, [], None
+        res.notes.append("Stopped. The answer was discarded and not saved.")
+        return res
+
+    def _explore(self, question, mode, groups, names, session, consent, memory, k, res: TurnResult, cancel=None) -> TurnResult:
         """Claude reads a sanitized, read-only copy of the ticked projects through Claude Code. Order: check, consent, copy, ask, delete."""
         if mode in ("gemini", "openai", "ollama", "compare"):
             res.notes.append("Explore works only with Claude, through your Claude Code login. Choose Auto or Claude.")
@@ -415,6 +428,8 @@ class Engine:
             ans = AnswerOut("claude", explorer.model, error=f"{type(e).__name__}: {e}")
         finally:
             explore.cleanup()                       # the copy is never kept
+        if cancel is not None and cancel.is_set():
+            return self._stopped(res)
         res.answers = [ans]
         if session is not None:
             self._record(session, res, res.route)
