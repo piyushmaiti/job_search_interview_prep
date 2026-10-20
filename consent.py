@@ -36,6 +36,50 @@ class ConsentRequest:
 ConsentFn = Callable[[ConsentRequest], "list[str] | None"]
 
 
+PERSONAL_PREFIXES = ("profile/", "roles/")      # your CV, About you, publications, and each role's documents
+
+
+def split_files(req: ConsentRequest) -> tuple[list[str], list[str], bool]:
+    """(code files, personal files, whether code from an earlier turn is included) for a request."""
+    personal = [f for f in req.files if f.startswith(PERSONAL_PREFIXES)]
+    code = [f for f in req.files if f not in personal and not f.startswith("(")]
+    earlier = req.carried or any(f.startswith("(project code") for f in req.files)
+    return code, personal, earlier
+
+
+def dialog_title(req: ConsentRequest) -> str:
+    """Says what is going out: project code, your CV and job text, or both."""
+    code, personal, earlier = split_files(req)
+    has_code = bool(code) or earlier or not personal
+    if has_code and personal:
+        return "This question will send project code and your CV, profile and job text to a model"
+    if personal:
+        return "This question will send your CV, profile and job text to a model"
+    return "This question will send project code to a model"
+
+
+def included_line(req: ConsentRequest) -> str:
+    """One plain sentence listing the kinds of content in the request."""
+    code, personal, earlier = split_files(req)
+    parts = []
+    if code or earlier:
+        parts.append(f"project code ({len(code)} file{'s' if len(code) != 1 else ''})" if code else "project code from an earlier turn in this chat")
+    if personal:
+        parts.append(f"your CV, About you, publications and job text ({len(personal)} file{'s' if len(personal) != 1 else ''})")
+    return "Included: " + " and ".join(parts) + "." if parts else ""
+
+
+def settings_line(choice: str, label: str = "") -> str:
+    """Names the model chosen in Settings, so it is clear that choosing it there is not permission to send."""
+    if choice == "auto":
+        what = "Auto, which picks a model for each question"
+    elif choice == "compare":
+        what = "Compare, which asks two models"
+    else:
+        what = label or choice
+    return f"Your model choice in Settings is {what}. That choice alone does not allow anything to be sent; you decide below."
+
+
 def options_for(providers: dict[str, Provider]) -> list[ConsentOption]:
     out = []
     for key, p in providers.items():
@@ -49,7 +93,7 @@ def cli_consent(req: ConsentRequest) -> list[str] | None:
         what = "your personal documents" if req.kind == "personal" else "project code"
         print(f"This question includes {what} and needs your choice of provider. Not a terminal, so nothing was sent.")
         return None
-    print("\nThis question will send " + ("your CV, profile and job text" if req.kind == "personal" else "project code") + " to a model.")
+    print("\n" + dialog_title(req) + ".")
     if req.carried:
         print("(Code from an earlier turn in this chat is still part of the context.)")
     if req.detail:
