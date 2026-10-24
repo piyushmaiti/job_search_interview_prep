@@ -798,7 +798,7 @@ if mode == "Prep tools":
     prep_ui.prep_page(role, writers)
     st.stop()
 if mode == "Mock interview":
-    prep_ui.mock_page(role, writers)
+    prep_ui.mock_page(role, writers, index, cfg)
     st.stop()
 
 for _n in ("left", "right"):

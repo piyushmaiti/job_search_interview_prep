@@ -377,7 +377,18 @@ def prep_page(role: candidate.Role, writers: dict) -> None:
             st.download_button("Download as Markdown", saved, file_name=f"{role.slug}-{key}.md", key=f"dl_{role.slug}_{key}")
 
 
-def mock_page(role: candidate.Role, writers: dict) -> None:
+MOCK_HELP = """\
+1. **Pick Behavioral or Technical.** Each question comes from your CV, About you, the job description and your intent.
+2. **Question source.** Keep "My CV and the job", or choose "Use selected resources" to also base questions on papers, notes or code you pick here.
+3. **Focus on part of a paper.** For each paper you can leave it on "Whole paper, varied", where each new question uses different passages, or pick the sections to be quizzed on.
+4. **Write your answer** as you would say it out loud, then press Get feedback. You get what worked, what to improve, what your documents could add, and a stronger version of your answer. There are no scores.
+5. **What leaves your computer.** Your CV, About you, the job, and any resources you picked go to the model you chose (Claude through your login, or OpenAI with your API key). Project code asks for a fresh yes at each step. Nothing is sent until you press Start, Get feedback or Next question.
+6. **Check the facts.** The model can be wrong about a paper or about your work. Numbers that are not in your documents are flagged.
+7. **Save.** Press Save under any question to keep it. The whole interview is also saved in this role's prep folder.
+"""
+
+
+def mock_page(role: candidate.Role, writers: dict, index=None, cfg: dict | None = None) -> None:
     """A text interview, one question at a time. Voice is planned; this is a beta."""
     import mock
     import prep
@@ -385,6 +396,8 @@ def mock_page(role: candidate.Role, writers: dict) -> None:
         st.markdown("### Mock interview, beta")
         st.caption("Text only for now. You get one question at a time, write your answer, and receive written feedback "
                    "and a stronger version of your answer. No scores.")
+        with st.expander("How this works"):
+            st.markdown(MOCK_HELP)
         saved_section(role, "mock", show_saved_mock)
         miss = prep.missing_inputs(role)
         if miss:
@@ -394,13 +407,28 @@ def mock_page(role: candidate.Role, writers: dict) -> None:
         if not state:
             complete, agreed, wname = _pick_writer(writers, f"mock_{role.slug}")
             kind = st.radio("Interview type", list(mock.TYPES), horizontal=True, key=f"mocktype_{role.slug}")
-            if st.button("Start", key=f"mockstart_{role.slug}", disabled=bool(miss) or complete is None or not agreed):
+            groups, code_ok, use_res, focus, focus_labels = set(), True, False, {}, {}
+            if index is not None:
+                src = st.radio("Question source", ["My CV and the job", "Use selected resources"], horizontal=True, key=f"mocksrc_{role.slug}",
+                               help="My CV and the job: questions come from your documents and the job description. Use selected resources: "
+                                    "they also draw on the papers, notes and code you pick here. Your CV and the job still go along.")
+                use_res = src == "Use selected resources"
+                if use_res:
+                    groups, code_ok, focus, focus_labels = _resource_picker(index, cfg or {}, role, wname)
+            ready = bool(groups) or not use_res
+            if st.button("Start", key=f"mockstart_{role.slug}", disabled=bool(miss) or complete is None or not agreed or not code_ok or not ready):
                 try:
                     with st.spinner("Preparing the first question..."):
-                        q = mock.next_question(complete, role, kind, [])
-                    S[key] = {"kind": kind, "started": mock.now(), "writer": wname, "items": [{"question": q}]}
+                        res_text, res_names, seen = mock.resource_context(index, groups, role, kind, focus=focus) if groups else ("", [], set())
+                        res_names = [n + (f" (sections: {'; '.join(focus_labels[n])})" if n in focus_labels else "") for n in res_names]
+                        q = mock.next_question(complete, role, kind, [], resources=res_text)
+                    code = sorted(g for g in groups if index.groups().get(g, {}).get("kind") == "code")
+                    S[key] = {"kind": kind, "started": mock.now(), "writer": wname, "items": [{"question": q, "resources": res_text}],
+                              "res_names": res_names, "code": code, "groups": sorted(groups), "seen": sorted(seen),
+                              "focus": {g: sorted(v) for g, v in focus.items()}}
                     if wname == "openai":
                         _next_round("openai_ok")
+                    _next_round("mockcode_ok")
                 except Exception as e:
                     st.error(f"Could not start: {e}")
                     return
@@ -417,15 +445,19 @@ def mock_page(role: candidate.Role, writers: dict) -> None:
         cur = items[-1]
         st.markdown(f"**{state['kind']} interview, question {len(items)} of up to {mock.MAX_QUESTIONS}**")
         st.markdown(f"> {cur['question']}")
+        if state.get("res_names"):
+            st.caption("Questions drawn from: " + ", ".join(state["res_names"]))
         if "feedback" not in cur:
             ans = st.text_area("Your answer", height=220, key=f"mockans_{role.slug}_{len(items)}",
                                help="Write it as you would say it. Aim for one to two minutes spoken.")
-            if st.button("Get feedback", key=f"mockfb_{role.slug}_{len(items)}", disabled=complete is None):
+            sent_ok = _code_gate(state, role, f"fb{len(items)}", state.get("writer", "claude"))
+            if st.button("Get feedback", key=f"mockfb_{role.slug}_{len(items)}", disabled=complete is None or not sent_ok):
                 try:
                     with st.spinner("Reading your answer..."):
                         cur["answer"] = ans
-                        cur["feedback"] = mock.feedback(complete, role, state["kind"], cur["question"], ans)
-                    mock.record(role, state["kind"], state["started"], items)
+                        cur["feedback"] = mock.feedback(complete, role, state["kind"], cur["question"], ans, resources=cur.get("resources", ""))
+                    mock.record(role, state["kind"], state["started"], items, state.get("res_names"))
+                    _next_round("mockcode")
                 except Exception as e:
                     cur.pop("answer", None)
                     cur.pop("feedback", None)
@@ -436,19 +468,26 @@ def mock_page(role: candidate.Role, writers: dict) -> None:
             st.markdown("**Your answer**")
             st.write(cur["answer"])
             st.markdown(safetext.math(safetext.strip_images(cur["feedback"])))
-            note = prep.check(cur["feedback"], role)
+            note = prep.check(cur["feedback"], role, cur.get("resources", ""))
             if note:
                 st.warning(note)
             st.button("Saved" if cur.get("saved_id") else "Save this question and answer", key=f"mocksave_{role.slug}_{len(items)}",
                       disabled=bool(cur.get("saved_id")), on_click=save_mock_item, args=(role, state, cur),
                       help="Keep this question, your answer and the feedback in this role's Saved list.")
             more = len(items) < mock.MAX_QUESTIONS
+            next_ok = _code_gate(state, role, f"nx{len(items)}", state.get("writer", "claude")) if more else True
             c1, c2 = st.columns(2)
-            if more and c1.button("Next question", key=f"mocknext_{role.slug}_{len(items)}", use_container_width=True):
+            if more and c1.button("Next question", key=f"mocknext_{role.slug}_{len(items)}", use_container_width=True, disabled=not next_ok):
                 try:
                     with st.spinner("Preparing the next question..."):
-                        q = mock.next_question(complete, role, state["kind"], [i["question"] for i in items])
-                    items.append({"question": q})
+                        res_text = ""
+                        if index is not None and state.get("groups"):       # fresh passages: earlier questions used the others
+                            res_text, _names, seen = mock.resource_context(index, set(state["groups"]), role, state["kind"], set(state.get("seen", [])),
+                                                                           {g: set(v) for g, v in state.get("focus", {}).items()})
+                            state["seen"] = sorted(seen)
+                        q = mock.next_question(complete, role, state["kind"], [i["question"] for i in items], resources=res_text)
+                    items.append({"question": q, "resources": res_text})
+                    _next_round("mockcode")
                 except Exception as e:
                     st.error(f"Could not get the next question: {e}")
                     return
@@ -457,6 +496,57 @@ def mock_page(role: candidate.Role, writers: dict) -> None:
                 S.pop(key, None)
                 S.flash = (True, "Interview saved in this role's prep folder.")
                 st.rerun()
+
+
+def _who(writer: str) -> str:
+    return {"claude": "Claude", "openai": "OpenAI"}.get(writer, writer)
+
+
+def _resource_picker(index, cfg: dict, role: candidate.Role, writer: str):
+    """Pick papers, notes and code projects for the mock interview, and optionally the sections of a paper to focus on.
+    Returns (the picked groups, whether Start may go ahead, {paper: ids of the picked sections}, {paper: section labels})."""
+    import mock
+    local, code = mock.resource_options(index, cfg)
+    if not local and not code:
+        st.info("No papers, notes or code projects yet. Add them on the Research tab, then pick them here.")
+        return set(), True, {}, {}
+    picked_local = st.multiselect("Papers and notes", local, key=f"mockres_local_{role.slug}") if local else []
+    focus, labels, ok = {}, {}, True
+    for i, g in enumerate(picked_local):
+        opts = mock.section_options(index, g)
+        if not opts:
+            continue
+        with st.container(key=f"mockfocus_box_{role.slug}_{i}"):
+            how = st.radio(f"Focus the questions on ({g.rsplit('/', 1)[-1]})", ["Whole paper, varied", "Pick sections"], horizontal=True,
+                           key=f"mockfocus_{role.slug}_{g}",
+                           help="Whole paper, varied: each question uses different parts of it. Pick sections: only the sections you tick are sent.")
+            if how == "Pick sections":
+                names = [o[0] for o in opts]
+                chosen = st.multiselect("Sections", names, key=f"mocksec_{role.slug}_{g}")
+                if not chosen:
+                    st.caption("Pick at least one section.")
+                    ok = False
+                else:
+                    focus[g] = set().union(*(ids for label, ids in opts if label in chosen))
+                    labels[g] = chosen
+    picked_code = st.multiselect("Code projects", code, key=f"mockres_code_{role.slug}") if code else []
+    groups = set(picked_local) | set(picked_code)
+    if groups:
+        shown = [g + (f" (sections: {'; '.join(labels[g])})" if g in labels else "") for g in sorted(groups)]
+        st.caption(f"Sent to {_who(writer)} with your CV and the job: " + ", ".join(shown) + ".")
+    if picked_code:
+        n = sum(mock.code_file_count(index, g) for g in picked_code)
+        ok = st.checkbox(f"Send code from {', '.join(picked_code)} (about {n} files, the best-matching pieces) to {_who(writer)} for this step.",
+                         key=f"mockcode_ok_{role.slug}_{_round('mockcode_ok')}") and ok
+    return groups, ok, focus, labels
+
+
+def _code_gate(state: dict, role: candidate.Role, label: str, writer: str) -> bool:
+    """When the interview uses code, each step that sends it needs a fresh yes. Nothing is remembered."""
+    if not state.get("code"):
+        return True
+    return st.checkbox(f"Send code from {', '.join(state['code'])} to {_who(writer)} for this step.",
+                       key=f"mockcode_{role.slug}_{label}_{_round('mockcode')}")
 
 
 def saved_section(role: candidate.Role, kind: str, show) -> None:
@@ -486,7 +576,7 @@ def saved_section(role: candidate.Role, kind: str, show) -> None:
 
 
 def show_saved_mock(it: dict) -> None:
-    st.caption(f"{it.get('interview', '')} interview")
+    st.caption(f"{it.get('interview', '')} interview" + (f" · drawn from: {', '.join(it['resources'])}" if it.get("resources") else ""))
     st.markdown("**Your answer**")
     st.write(it.get("answer", ""))
     st.markdown(safetext.math(safetext.strip_images(it.get("feedback", ""))))
@@ -494,4 +584,5 @@ def show_saved_mock(it: dict) -> None:
 
 def save_mock_item(role: candidate.Role, state: dict, cur: dict) -> None:
     cur["saved_id"] = saved.save(role, "mock", {"interview": state["kind"], "started": state["started"], "question": cur["question"],
-                                                "answer": cur.get("answer", ""), "feedback": cur.get("feedback", "")})
+                                                "answer": cur.get("answer", ""), "feedback": cur.get("feedback", ""),
+                                                "resources": state.get("res_names") or []})

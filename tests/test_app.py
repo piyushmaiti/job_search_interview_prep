@@ -706,3 +706,76 @@ def test_cv_going_to_claude_does_not_ask():
     at.chat_input[0].set_value("How do citations work in the library notes?").run()
     assert not at.exception, at.exception
     assert at.session_state["pending"] is None
+
+
+def mock_with_resources():
+    at = run_app()
+    at.session_state[f"mode_{ROLE_SLUG}"] = "Mock interview"
+    at.run()
+    at.radio(key=f"mocksrc_{ROLE_SLUG}").set_value("Use selected resources").run()
+    return at
+
+
+def test_mock_default_source_shows_no_picker_and_starts_as_before():
+    at = run_app()
+    at.session_state[f"mode_{ROLE_SLUG}"] = "Mock interview"
+    at.run()
+    assert not at.multiselect, "no picker unless resources are chosen"
+    next(b for b in at.button if b.label == "Start").click().run()
+    assert not at.exception, at.exception
+    assert at.session_state[f"mockstate_{ROLE_SLUG}"]["items"][0]["resources"] == ""
+
+
+def test_mock_resources_need_a_pick_and_code_needs_a_yes():
+    at = mock_with_resources()
+    assert not at.exception, at.exception
+    assert next(b for b in at.button if b.label == "Start").disabled, "nothing picked yet"
+    at.multiselect(key=f"mockres_code_{ROLE_SLUG}").set_value(["sample_project"]).run()
+    assert next(b for b in at.button if b.label == "Start").disabled, "code needs its own yes"
+    at.checkbox(key=f"mockcode_ok_{ROLE_SLUG}_0").check().run()
+    next(b for b in at.button if b.label == "Start").click().run()
+    assert not at.exception, at.exception
+    st_ = at.session_state[f"mockstate_{ROLE_SLUG}"]
+    assert "vae_loss" in st_["items"][0]["resources"] and st_["code"] == ["sample_project"] and st_["res_names"]
+    # the next question and the feedback each ask again before sending code
+    assert next(b for b in at.button if b.label == "Get feedback").disabled
+    assert at.checkbox(key=f"mockcode_{ROLE_SLUG}_fb1_0").value is False
+
+
+def test_mock_papers_only_need_no_code_yes_and_are_listed_on_the_page():
+    at = mock_with_resources()
+    options = at.multiselect(key=f"mockres_local_{ROLE_SLUG}").options
+    assert options and not any(o.startswith(("profile/", "roles/")) for o in options)
+    at.multiselect(key=f"mockres_local_{ROLE_SLUG}").set_value([options[0]]).run()
+    next(b for b in at.button if b.label == "Start").click().run()
+    assert not at.exception, at.exception
+    assert any("Questions drawn from" in c.value and options[0].split("/")[-1] in c.value for c in at.caption)
+
+
+def test_mock_pick_sections_of_a_paper_limits_what_is_sent_and_is_shown():
+    at = mock_with_resources()
+    options = at.multiselect(key=f"mockres_local_{ROLE_SLUG}").options
+    paper = next((o for o in options if "library" in o.lower() or o.endswith(".md")), options[0])
+    at.multiselect(key=f"mockres_local_{ROLE_SLUG}").set_value([paper]).run()
+    assert not at.exception, at.exception
+    radios = [r for r in at.radio if r.key and r.key.startswith(f"mockfocus_{ROLE_SLUG}_")]
+    if not radios:
+        pytest.skip("the example paper has a single section, so there is nothing to pick")
+    radios[0].set_value("Pick sections").run()
+    assert next(b for b in at.button if b.label == "Start").disabled, "pick at least one section"
+    sec = next(m for m in at.multiselect if m.key and m.key.startswith(f"mocksec_{ROLE_SLUG}_"))
+    sec.set_value([sec.options[0]]).run()
+    next(b for b in at.button if b.label == "Start").click().run()
+    assert not at.exception, at.exception
+    state = at.session_state[f"mockstate_{ROLE_SLUG}"]
+    assert state["focus"] and any("sections:" in n for n in state["res_names"])
+
+
+def test_mock_page_has_a_how_this_works_box_that_matches_the_rules():
+    at = run_app()
+    at.session_state[f"mode_{ROLE_SLUG}"] = "Mock interview"
+    at.run()
+    assert not at.exception, at.exception
+    box = next(e for e in at.expander if e.label == "How this works")
+    text = " ".join(m.value for m in box.markdown)
+    assert "Whole paper, varied" in text and "Nothing is sent until you press Start" in text and "fresh yes" in text
