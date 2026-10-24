@@ -139,8 +139,9 @@ def unsupported_numbers(answer: str, source: str) -> list[str]:
     return out
 
 
-def check(answer: str, role: candidate.Role) -> str:
-    odd = unsupported_numbers(answer, context(role))
+def check(answer: str, role: candidate.Role, extra: str = "") -> str:
+    """extra is further text the model was given, such as mock-interview resources, so its numbers are not flagged."""
+    odd = unsupported_numbers(answer, context(role) + ("\n" + extra if extra else ""))
     return CHECK_NOTE + ", ".join(odd) if odd else ""
 
 
