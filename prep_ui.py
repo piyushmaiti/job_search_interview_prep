@@ -40,6 +40,7 @@ def css() -> str:
   font-weight: 500 !important; font-size: 19px !important; letter-spacing: 0 !important; color: var(--fg) !important; padding: 1.1rem 0 .2rem !important; }
 .st-key-page_prep [data-testid="stMarkdownContainer"] p, .st-key-page_prep li, .st-key-page_mock blockquote p { font-size: 16px !important; line-height: 1.65 !important; }
 .st-key-page_prep [data-testid="stCaptionContainer"], .st-key-page_mock [data-testid="stCaptionContainer"] { color: var(--muted) !important; opacity: 1 !important; max-width: 62ch; }
+[class*="st-key-mockanscode_"] textarea { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace !important; font-size: 14px !important; line-height: 1.5 !important; }
 .st-key-page_mock blockquote { border-left: 3px solid var(--accent) !important; background: transparent !important; padding: .2rem 0 .2rem 1rem !important; margin: .4rem 0 1rem !important; }
 .st-key-page_mock blockquote p { font-family: "Literata", Georgia, serif !important; font-size: 20px !important; line-height: 1.5 !important; color: var(--fg) !important; }
 [class*="st-key-page_"] [data-testid="stAlert"] { background: var(--panel) !important; border: 1px solid var(--line) !important; border-left: 3px solid var(--accent) !important;
@@ -378,12 +379,12 @@ def prep_page(role: candidate.Role, writers: dict) -> None:
 
 
 MOCK_HELP = """\
-1. **Pick Behavioral or Technical.** Each question comes from your CV, About you, the job description and your intent.
+1. **Pick Behavioral, Technical or Coding.** Behavioral and Technical questions come from your CV, About you, the job description and your intent. Coding gives you a short problem in the language you choose, and you write the code.
 2. **Question source.** Keep "My CV and the job", or choose "Use selected resources" to also base questions on the documents and project code ticked in Sources on the left. Everything starts ticked except code.
 3. **Focus on part of a document.** For each ticked document you can leave it on "Whole document, varied", where each new question uses different passages, or pick the sections to be quizzed on.
 4. **Write your answer** as you would say it out loud, then press Get feedback. You get what worked, what to improve, what your documents could add, and a stronger version of your answer. There are no scores.
 5. **What leaves your computer.** Your CV, About you, the job, and any resources you picked go to the model you chose (Claude through your login, or OpenAI with your API key). Project code asks for a fresh yes at each step. Nothing is sent until you press Start, Get feedback or Next question.
-6. **Check the facts.** The model can be wrong about a document or about your work. Numbers that are not in your documents are flagged.
+6. **Check the facts.** The model can be wrong about a document or about your work. Numbers that are not in your documents are flagged. For Coding the model reads your code and does not run it, so it can miss a bug or flag correct code: test it yourself.
 7. **Save.** Press Save under any question to keep it. The whole interview is also saved in this role's prep folder.
 """
 
@@ -407,6 +408,7 @@ def mock_page(role: candidate.Role, writers: dict, index=None, cfg: dict | None 
         if not state:
             complete, agreed, wname = _pick_writer(writers, f"mock_{role.slug}")
             kind = st.radio("Interview type", list(mock.TYPES), horizontal=True, key=f"mocktype_{role.slug}")
+            language = st.selectbox("Language", list(mock.LANGUAGES), key=f"mocklang_{role.slug}") if kind == "Coding" else ""
             groups, code_ok, use_res, focus, focus_labels = set(), True, False, {}, {}
             if index is not None:
                 src = st.radio("Question source", ["My CV and the job", "Use selected resources"], horizontal=True, key=f"mocksrc_{role.slug}",
@@ -421,9 +423,9 @@ def mock_page(role: candidate.Role, writers: dict, index=None, cfg: dict | None 
                     with st.spinner("Preparing the first question..."):
                         res_text, res_names, seen = mock.resource_context(index, groups, role, kind, focus=focus) if groups else ("", [], set())
                         res_names = [n + (f" (sections: {'; '.join(focus_labels[n])})" if n in focus_labels else "") for n in res_names]
-                        q = mock.next_question(complete, role, kind, [], resources=res_text)
+                        q = mock.next_question(complete, role, kind, [], resources=res_text, language=language or "Python")
                     code = sorted(g for g in groups if index.groups().get(g, {}).get("kind") == "code")
-                    S[key] = {"kind": kind, "started": mock.now(), "writer": wname, "items": [{"question": q, "resources": res_text}],
+                    S[key] = {"kind": kind, "language": language, "started": mock.now(), "writer": wname, "items": [{"question": q, "resources": res_text}],
                               "res_names": res_names, "code": code, "groups": sorted(groups), "seen": sorted(seen),
                               "focus": {g: sorted(v) for g, v in focus.items()}}
                     if wname == "openai":
@@ -443,20 +445,30 @@ def mock_page(role: candidate.Role, writers: dict, index=None, cfg: dict | None 
             return
         items = state["items"]
         cur = items[-1]
-        st.markdown(f"**{state['kind']} interview, question {len(items)} of up to {mock.MAX_QUESTIONS}**")
-        st.markdown(f"> {cur['question']}")
+        coding, lang = state["kind"] == "Coding", state.get("language", "")
+        st.markdown(f"**{state['kind']} interview{', ' + lang if coding and lang else ''}, question {len(items)} of up to {mock.MAX_QUESTIONS}**")
+        if coding:
+            with st.container(border=True):
+                st.markdown(safetext.math(safetext.strip_images(cur["question"])))
+        else:
+            st.markdown(f"> {cur['question']}")
         if state.get("res_names"):
             st.caption("Questions drawn from: " + ", ".join(state["res_names"]))
         if "feedback" not in cur:
-            ans = st.text_area("Your answer", height=220, key=f"mockans_{role.slug}_{len(items)}",
-                               help="Write it as you would say it. Aim for one to two minutes spoken.")
+            if coding:
+                ans = st.text_area("Your code", height=340, key=f"mockanscode_{role.slug}_{len(items)}",
+                                   help="Write your solution here. The model reads it and does not run it. Leave a comment where you are unsure.")
+            else:
+                ans = st.text_area("Your answer", height=220, key=f"mockans_{role.slug}_{len(items)}",
+                                   help="Write it as you would say it. Aim for one to two minutes spoken.")
             sent_ok = _code_gate(state, role, f"fb{len(items)}", state.get("writer", "claude"))
             if st.button("Get feedback", key=f"mockfb_{role.slug}_{len(items)}", disabled=complete is None or not sent_ok):
                 try:
                     with st.spinner("Reading your answer..."):
                         cur["answer"] = ans
-                        cur["feedback"] = mock.feedback(complete, role, state["kind"], cur["question"], ans, resources=cur.get("resources", ""))
-                    mock.record(role, state["kind"], state["started"], items, state.get("res_names"))
+                        cur["feedback"] = mock.feedback(complete, role, state["kind"], cur["question"], ans, resources=cur.get("resources", ""),
+                                                        language=lang or "Python")
+                    mock.record(role, state["kind"], state["started"], items, state.get("res_names"), lang)
                     _next_round("mockcode")
                 except Exception as e:
                     cur.pop("answer", None)
@@ -465,12 +477,18 @@ def mock_page(role: candidate.Role, writers: dict, index=None, cfg: dict | None 
                     return
                 st.rerun()
         else:
-            st.markdown("**Your answer**")
-            st.write(cur["answer"])
+            st.markdown("**Your code**" if coding else "**Your answer**")
+            if coding:
+                st.code(cur["answer"], language=mock.LANGUAGES.get(lang))
+            else:
+                st.write(cur["answer"])
             st.markdown(safetext.math(safetext.strip_images(cur["feedback"])))
-            note = prep.check(cur["feedback"], role, cur.get("resources", ""))
-            if note:
-                st.warning(note)
+            if coding:
+                st.caption("The model read your code; it did not run it. It can miss a bug or flag code that is right, so test it yourself.")
+            else:
+                note = prep.check(cur["feedback"], role, cur.get("resources", ""))
+                if note:
+                    st.warning(note)
             st.button("Saved" if cur.get("saved_id") else "Save this question and answer", key=f"mocksave_{role.slug}_{len(items)}",
                       disabled=bool(cur.get("saved_id")), on_click=save_mock_item, args=(role, state, cur),
                       help="Keep this question, your answer and the feedback in this role's Saved list.")
@@ -485,7 +503,8 @@ def mock_page(role: candidate.Role, writers: dict, index=None, cfg: dict | None 
                             res_text, _names, seen = mock.resource_context(index, set(state["groups"]), role, state["kind"], set(state.get("seen", [])),
                                                                            {g: set(v) for g, v in state.get("focus", {}).items()})
                             state["seen"] = sorted(seen)
-                        q = mock.next_question(complete, role, state["kind"], [i["question"] for i in items], resources=res_text)
+                        q = mock.next_question(complete, role, state["kind"], [i["question"] for i in items], resources=res_text,
+                                               language=lang or "Python")
                     items.append({"question": q, "resources": res_text})
                     _next_round("mockcode")
                 except Exception as e:
@@ -579,13 +598,18 @@ def saved_section(role: candidate.Role, kind: str, show) -> None:
 
 
 def show_saved_mock(it: dict) -> None:
-    st.caption(f"{it.get('interview', '')} interview" + (f" · drawn from: {', '.join(it['resources'])}" if it.get("resources") else ""))
-    st.markdown("**Your answer**")
-    st.write(it.get("answer", ""))
+    st.caption(f"{it.get('interview', '')} interview" + (f" · {it['language']}" if it.get("language") else "") + (f" · drawn from: {', '.join(it['resources'])}" if it.get("resources") else ""))
+    coding = it.get("interview") == "Coding"
+    st.markdown("**Your code**" if coding else "**Your answer**")
+    if coding:
+        import mock
+        st.code(it.get("answer", ""), language=mock.LANGUAGES.get(it.get("language", "")))
+    else:
+        st.write(it.get("answer", ""))
     st.markdown(safetext.math(safetext.strip_images(it.get("feedback", ""))))
 
 
 def save_mock_item(role: candidate.Role, state: dict, cur: dict) -> None:
     cur["saved_id"] = saved.save(role, "mock", {"interview": state["kind"], "started": state["started"], "question": cur["question"],
                                                 "answer": cur.get("answer", ""), "feedback": cur.get("feedback", ""),
-                                                "resources": state.get("res_names") or []})
+                                                "resources": state.get("res_names") or [], "language": state.get("language", "")})

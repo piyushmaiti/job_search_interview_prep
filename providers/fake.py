@@ -57,6 +57,13 @@ class FakeProvider(Provider):
                                   "## Experiments, results and numbers\nnot stated\n## Design decisions and rationale\nnot stated\n"
                                   "## Caveats, limitations and open questions\nnone\n## Glossary\nnone", model=f"{self.model} · merge")
         if system.startswith("You are an interview coach"):
+            if "MOCK QUESTION. Ask a short coding problem" in prompt:
+                return ProviderResult(text="Write `count_pairs(nums, target)` that returns how many pairs sum to target.\n\n```\ncount_pairs([1, 2, 3, 4], 5) -> 2\n```",
+                                      model=f"{self.model} · mock")
+            if "FEEDBACK on a coding answer" in prompt:
+                return ProviderResult(text="## What works\nClear loop.\n## Correctness and edge cases\nBy reading, an empty list works.\n## Complexity\nO(n^2) time, O(1) space.\n"
+                                      "## Readability\nGood names.\n## A stronger solution\n```python\ndef count_pairs(nums, target):\n    return 0\n```\nUses a dictionary.",
+                                      model=f"{self.model} · mock")
             if "MOCK QUESTION" in prompt:
                 return ProviderResult(text="Tell me about a time you had to learn something quickly for a project.", model=f"{self.model} · mock")
             if "FEEDBACK on" in prompt:

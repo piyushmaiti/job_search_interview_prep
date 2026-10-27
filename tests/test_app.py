@@ -5,6 +5,7 @@ import pytest
 from streamlit.testing.v1 import AppTest
 
 import candidate
+import saved
 import settings
 
 ROLE_SLUG = ""
@@ -377,6 +378,30 @@ def test_mock_interview_goes_from_question_to_feedback():
     assert not at.exception, at.exception
     assert not at.error, [e.value for e in at.error]
     assert any("A stronger version" in m.value for m in at.markdown)
+
+
+def test_coding_interview_takes_code_and_gives_code_feedback_that_is_saved_with_its_language():
+    at = run_app()
+    at.session_state[f"mode_{ROLE_SLUG}"] = "Mock interview"
+    at.run()
+    at.radio(key=f"mocktype_{ROLE_SLUG}").set_value("Coding").run()
+    assert at.selectbox(key=f"mocklang_{ROLE_SLUG}").value == "Python", "Python is the default"
+    at.selectbox(key=f"mocklang_{ROLE_SLUG}").set_value("JavaScript").run()
+    next(b for b in at.button if b.label == "Start").click().run()
+    assert not at.exception, at.exception
+    state = at.session_state[f"mockstate_{ROLE_SLUG}"]
+    assert state["kind"] == "Coding" and state["language"] == "JavaScript"
+    assert any("count_pairs" in m.value for m in at.markdown)
+    at.text_area(key=f"mockanscode_{ROLE_SLUG}_1").set_value("function f(a) { return 42; }").run()
+    next(b for b in at.button if b.label == "Get feedback").click().run()
+    assert not at.exception, at.exception
+    assert not at.warning, "the numbers-not-in-your-documents note does not apply to code"
+    assert any("Correctness and edge cases" in m.value for m in at.markdown)
+    assert any("did not run it" in c.value for c in at.caption)
+    assert any(c.language == "javascript" and "return 42" in c.value for c in at.code)
+    next(b for b in at.button if b.label.startswith("Save this question")).click().run()
+    item = saved.items(candidate.get_role(ROLE_SLUG), "mock")[0]
+    assert item["interview"] == "Coding" and item["language"] == "JavaScript"
 
 
 # ---------------------------------------------------------------- adding a code project from the menu

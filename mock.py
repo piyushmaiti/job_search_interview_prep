@@ -9,13 +9,16 @@ import time
 import candidate
 import prep
 
-TYPES = ("Behavioral", "Technical")
+TYPES = ("Behavioral", "Technical", "Coding")
+LANGUAGES = {"Python": "python", "JavaScript": "javascript", "Java": "java", "C++": "cpp", "SQL": "sql"}   # name -> code block language
 MAX_QUESTIONS = 8
 
 ASK_TASK = {
     "Behavioral": "a behavioral question (a past situation: conflict, ownership, failure, leadership, ambiguity, teamwork), "
                   "chosen so that the person's documents contain something real to answer with",
     "Technical": "a technical question for this role: {tech}",
+    "Coding": "a short coding problem to be solved in {language}, small enough to answer in about 20 lines, that suits the skills and tools "
+              "the job description names. State the input, the output, the constraints and one worked example",
 }
 TECH = {
     "Academic": "about their own research, methods and publications, or a method the job description names; start open and let follow-ups go deeper",
@@ -32,8 +35,12 @@ RESOURCE_CAP = 150_000       # characters of documents (about 38,000 tokens)
 CODE_CAP = 24_000            # characters of code
 
 
-def _with(system: str, resources: str) -> str:
-    return system + RESOURCE_RULE if resources else system
+CODING_RULE = ("\n\nThis is a coding interview. You read code; you cannot run it, so say \"by reading\" where you are unsure and never claim a test "
+               "passed. Statements about the person's code come from the code they wrote.")
+
+
+def _with(system: str, resources: str, kind: str = "") -> str:
+    return system + (CODING_RULE if kind == "Coding" else "") + (RESOURCE_RULE if resources else "")
 
 
 def _context(role: candidate.Role, resources: str) -> str:
@@ -149,17 +156,30 @@ def resource_context(index, groups: set[str], role: candidate.Role, kind: str, s
     return "\n\n".join(blocks), names, seen
 
 
-def question_prompt(role: candidate.Role, kind: str, asked: list[str], resources: str = "") -> tuple[str, str]:
-    task = ASK_TASK[kind].format(tech=TECH.get(role.kind, TECH["Industry"]))
+def question_prompt(role: candidate.Role, kind: str, asked: list[str], resources: str = "", language: str = "Python") -> tuple[str, str]:
+    task = ASK_TASK[kind].format(tech=TECH.get(role.kind, TECH["Industry"]), language=language)
     done = "\n".join(f"- {q}" for q in asked) or "(none yet)"
-    system = _with(prep.GROUND + "\n\nYou are now the interviewer in a mock interview. Stay in that role.", resources)
-    user = (f"{_context(role, resources)}\n\nMOCK QUESTION. Ask {task}.\nQuestions already asked, do not repeat them:\n{done}\n\n"
-            "Reply with the single question only, as you would say it aloud. No preface, no hints, no answer.")
+    system = _with(prep.GROUND + "\n\nYou are now the interviewer in a mock interview. Stay in that role.", resources, kind)
+    tail = ("Reply with the single problem only. Put the worked example in a fenced code block. No preface, no hints, no solution."
+            if kind == "Coding" else "Reply with the single question only, as you would say it aloud. No preface, no hints, no answer.")
+    user = (f"{_context(role, resources)}\n\nMOCK QUESTION. Ask {task}.\nQuestions already asked, do not repeat them:\n{done}\n\n{tail}")
     return system, user
 
 
-def feedback_prompt(role: candidate.Role, kind: str, question: str, answer: str, resources: str = "") -> tuple[str, str]:
-    system = _with(prep.GROUND + "\n\nYou are now an interviewing coach giving honest feedback on one answer. No scores or grades.", resources)
+CODING_FEEDBACK = ("Write exactly these sections:\n"
+                   "## What works\nSpecific things, quoting their code.\n"
+                   "## Correctness and edge cases\nWalk through the worked example by reading, then name inputs that would break it "
+                   "(empty, one item, duplicates, very large, wrong type). Say if you are unsure.\n"
+                   "## Complexity\nTime and space, and whether a better bound is possible.\n"
+                   "## Readability\nNames, structure and what an interviewer would comment on.\n"
+                   "## A stronger solution\nA corrected or improved solution in one fenced code block, then two or three sentences on what changed and why.")
+
+
+def feedback_prompt(role: candidate.Role, kind: str, question: str, answer: str, resources: str = "", language: str = "Python") -> tuple[str, str]:
+    system = _with(prep.GROUND + "\n\nYou are now an interviewing coach giving honest feedback on one answer. No scores or grades.", resources, kind)
+    if kind == "Coding":
+        return system, (f"{_context(role, resources)}\n\nFEEDBACK on a coding answer in {language}.\nPROBLEM: {question}\n\n"
+                        f"THE PERSON'S CODE:\n{answer}\n\n{CODING_FEEDBACK}")
     user = (f"{_context(role, resources)}\n\nFEEDBACK on a {kind.lower()} answer.\nQUESTION: {question}\n\nTHE PERSON'S ANSWER:\n{answer}\n\n"
             "Write exactly these sections:\n"
             "## What worked\nSpecific things, quoting their words.\n"
@@ -183,24 +203,30 @@ def _ask(complete, system: str, user: str, timeout: int) -> str:
     return text
 
 
-def next_question(complete, role: candidate.Role, kind: str, asked: list[str], timeout: int = 300, resources: str = "") -> str:
-    return _ask(complete, *question_prompt(role, kind, asked, resources), timeout=timeout)
+def next_question(complete, role: candidate.Role, kind: str, asked: list[str], timeout: int = 300, resources: str = "",
+                  language: str = "Python") -> str:
+    return _ask(complete, *question_prompt(role, kind, asked, resources, language), timeout=timeout)
 
 
-def feedback(complete, role: candidate.Role, kind: str, question: str, answer: str, timeout: int = 600, resources: str = "") -> str:
+def feedback(complete, role: candidate.Role, kind: str, question: str, answer: str, timeout: int = 600, resources: str = "",
+             language: str = "Python") -> str:
     if not answer.strip():
-        raise ValueError("Write an answer first.")
-    return _ask(complete, *feedback_prompt(role, kind, question, answer, resources), timeout=timeout)
+        raise ValueError("Write an answer first." if kind != "Coding" else "Write your code first.")
+    return _ask(complete, *feedback_prompt(role, kind, question, answer, resources, language), timeout=timeout)
 
 
 # ---------------------------------------------------------------- the saved record
-def record(role: candidate.Role, kind: str, started: str, items: list[dict], resources: list[str] | None = None) -> None:
+def record(role: candidate.Role, kind: str, started: str, items: list[dict], resources: list[str] | None = None,
+           language: str = "") -> None:
     """Keep the whole interview as one Markdown file in the role's prep folder, so you can read it again."""
-    lines = [f"# Mock interview ({kind.lower()}), {started}", ""]
+    lines = [f"# Mock interview ({kind.lower()}{', ' + language if kind == 'Coding' and language else ''}), {started}", ""]
     if resources:
         lines += ["Resources used: " + ", ".join(resources), ""]
     for i, it in enumerate(items, start=1):
-        lines += [f"## Question {i}", it["question"], "", "### Your answer", it.get("answer", "(not answered)"), ""]
+        ans = it.get("answer", "(not answered)")
+        if kind == "Coding" and "answer" in it:
+            ans = f"```{LANGUAGES.get(language, '')}\n{ans.strip(chr(10))}\n```"
+        lines += [f"## Question {i}", it["question"], "", "### Your code" if kind == "Coding" else "### Your answer", ans, ""]
         if it.get("feedback"):
             lines += ["### Feedback", it["feedback"], ""]
     candidate._write(prep.prep_dir(role) / f"mock_{started.replace(':', '').replace(' ', '_')}.md", "\n".join(lines))
