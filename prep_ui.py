@@ -379,11 +379,11 @@ def prep_page(role: candidate.Role, writers: dict) -> None:
 
 MOCK_HELP = """\
 1. **Pick Behavioral or Technical.** Each question comes from your CV, About you, the job description and your intent.
-2. **Question source.** Keep "My CV and the job", or choose "Use selected resources" to also base questions on papers, notes or code you pick here.
-3. **Focus on part of a paper.** For each paper you can leave it on "Whole paper, varied", where each new question uses different passages, or pick the sections to be quizzed on.
+2. **Question source.** Keep "My CV and the job", or choose "Use selected resources" to also base questions on the documents and project code ticked in Sources on the left. Everything starts ticked except code.
+3. **Focus on part of a document.** For each ticked document you can leave it on "Whole document, varied", where each new question uses different passages, or pick the sections to be quizzed on.
 4. **Write your answer** as you would say it out loud, then press Get feedback. You get what worked, what to improve, what your documents could add, and a stronger version of your answer. There are no scores.
 5. **What leaves your computer.** Your CV, About you, the job, and any resources you picked go to the model you chose (Claude through your login, or OpenAI with your API key). Project code asks for a fresh yes at each step. Nothing is sent until you press Start, Get feedback or Next question.
-6. **Check the facts.** The model can be wrong about a paper or about your work. Numbers that are not in your documents are flagged.
+6. **Check the facts.** The model can be wrong about a document or about your work. Numbers that are not in your documents are flagged.
 7. **Save.** Press Save under any question to keep it. The whole interview is also saved in this role's prep folder.
 """
 
@@ -411,7 +411,7 @@ def mock_page(role: candidate.Role, writers: dict, index=None, cfg: dict | None 
             if index is not None:
                 src = st.radio("Question source", ["My CV and the job", "Use selected resources"], horizontal=True, key=f"mocksrc_{role.slug}",
                                help="My CV and the job: questions come from your documents and the job description. Use selected resources: "
-                                    "they also draw on the papers, notes and code you pick here. Your CV and the job still go along.")
+                                    "they also draw on the documents and project code ticked in Sources on the left. Your CV and the job still go along.")
                 use_res = src == "Use selected resources"
                 if use_res:
                     groups, code_ok, focus, focus_labels = _resource_picker(index, cfg or {}, role, wname)
@@ -503,37 +503,40 @@ def _who(writer: str) -> str:
 
 
 def _resource_picker(index, cfg: dict, role: candidate.Role, writer: str):
-    """Pick papers, notes and code projects for the mock interview, and optionally the sections of a paper to focus on.
-    Returns (the picked groups, whether Start may go ahead, {paper: ids of the picked sections}, {paper: section labels})."""
+    """The documents and project code ticked in Sources (the same list and ticks as Research), and optionally the parts of a document to focus on.
+    Returns (the picked groups, whether Start may go ahead, {document: ids of the picked sections}, {document: section labels})."""
     import mock
     local, code = mock.resource_options(index, cfg)
     if not local and not code:
-        st.info("No papers, notes or code projects yet. Add them on the Research tab, then pick them here.")
+        st.info("No documents or project code yet. Add them in Sources on the left.")
         return set(), True, {}, {}
-    picked_local = st.multiselect("Papers and notes", local, key=f"mockres_local_{role.slug}") if local else []
+    ticked = set(S.get("selected") or ())
+    picked_local = [g for g in local if g in ticked]
+    picked_code = [g for g in code if g in ticked]
+    if not picked_local and not picked_code:
+        st.info("Nothing is ticked in Sources on the left. Tick the documents or project code to base the questions on.")
+        return set(), True, {}, {}
     focus, labels, ok = {}, {}, True
-    for i, g in enumerate(picked_local):
-        opts = mock.section_options(index, g)
-        if not opts:
-            continue
-        with st.container(key=f"mockfocus_box_{role.slug}_{i}"):
-            how = st.radio(f"Focus the questions on ({g.rsplit('/', 1)[-1]})", ["Whole paper, varied", "Pick sections"], horizontal=True,
-                           key=f"mockfocus_{role.slug}_{g}",
-                           help="Whole paper, varied: each question uses different parts of it. Pick sections: only the sections you tick are sent.")
-            if how == "Pick sections":
-                names = [o[0] for o in opts]
-                chosen = st.multiselect("Sections", names, key=f"mocksec_{role.slug}_{g}")
-                if not chosen:
-                    st.caption("Pick at least one section.")
-                    ok = False
-                else:
-                    focus[g] = set().union(*(ids for label, ids in opts if label in chosen))
-                    labels[g] = chosen
-    picked_code = st.multiselect("Code projects", code, key=f"mockres_code_{role.slug}") if code else []
+    parts = [(g, opts) for g in picked_local if (opts := mock.section_options(index, g))]
+    if parts:
+        with st.expander("Focus on part of a document (optional)"):
+            for i, (g, opts) in enumerate(parts):
+                with st.container(key=f"mockfocus_box_{role.slug}_{i}"):
+                    how = st.radio(f"Focus the questions on ({g.rsplit('/', 1)[-1]})", ["Whole document, varied", "Pick sections"], horizontal=True,
+                                   key=f"mockfocus_{role.slug}_{g}",
+                                   help="Whole document, varied: each question uses different parts of it. Pick sections: only the sections you tick are sent.")
+                    if how == "Pick sections":
+                        chosen = st.multiselect("Sections", [o[0] for o in opts], key=f"mocksec_{role.slug}_{g}")
+                        if not chosen:
+                            st.caption("Pick at least one section.")
+                            ok = False
+                        else:
+                            focus[g] = set().union(*(ids for label, ids in opts if label in chosen))
+                            labels[g] = chosen
     groups = set(picked_local) | set(picked_code)
-    if groups:
-        shown = [g + (f" (sections: {'; '.join(labels[g])})" if g in labels else "") for g in sorted(groups)]
-        st.caption(f"Sent to {_who(writer)} with your CV and the job: " + ", ".join(shown) + ".")
+    docs = [g.rsplit("/", 1)[-1] + (f" (sections: {'; '.join(labels[g])})" if g in labels else "") for g in picked_local]
+    shown = docs if len(docs) <= 5 else [f"{len(docs)} documents"]
+    st.caption(f"Sent to {_who(writer)} with your CV and the job: " + ", ".join(shown + picked_code) + ". Change the ticks in Sources on the left.")
     if picked_code:
         n = sum(mock.code_file_count(index, g) for g in picked_code)
         ok = st.checkbox(f"Send code from {', '.join(picked_code)} (about {n} files, the best-matching pieces) to {_who(writer)} for this step.",

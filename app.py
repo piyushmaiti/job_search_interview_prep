@@ -797,13 +797,11 @@ writers = {"claude": _claude_login(eng.providers.get("claude")),               #
 if mode == "Prep tools":
     prep_ui.prep_page(role, writers)
     st.stop()
-if mode == "Mock interview":
-    prep_ui.mock_page(role, writers, index, cfg)
-    st.stop()
+MOCK = mode == "Mock interview"                   # the mock interview shares the Sources list on the left with Research
 
 for _n in ("left", "right"):
     S.setdefault(f"collapse_{_n}", st.query_params.get(_n) == "0")
-cl, cr = S.collapse_left, S.collapse_right
+cl, cr = S.collapse_left, S.collapse_right or MOCK     # Evidence has nothing to show in a mock interview
 # A collapsed section keeps its place as a thin strip, and the conversation column takes the room it frees.
 _wl, _wr = (0.14 if cl else 1.05), (0.14 if cr else 1.25)
 left, mid, right = st.columns([_wl, 4.8 - _wl - _wr, _wr], gap="medium")
@@ -833,7 +831,7 @@ with left:
             shown = sorted((d for d in docs if d not in gone), key=lambda g: (not candidate.is_workspace(g), g))   # your own documents first
             a1, a2 = st.columns(2)
             a1.button("Select all", key="sel-all", use_container_width=True, on_click=set_sources, args=({f"src-{d}": True for d in shown},),
-                      help="Tick every paper and note. Project code is never ticked for you.")
+                      help="Tick every document. Project code is never ticked for you.")
             a2.button("Clear all", key="sel-none", use_container_width=True, on_click=set_sources,
                       args=({f"src-{g}": False for g in shown + projs},), help="Untick everything, including project code.")
             for g in shown:
@@ -1048,7 +1046,7 @@ with left:
 
 # ---- right: evidence
 with right:
-    if cr:
+    if cr and not MOCK:
         st.button("", key="show_right", icon=":material/chevron_left:", type="tertiary", help="Show Evidence", on_click=toggle_side, args=("right",))
     with st.container(key="side_right"):
         with st.container(border=True):
@@ -1063,6 +1061,9 @@ with right:
 # ---- middle: conversation
 with mid:
     st.button("", key="m_open_left", icon=":material/chevron_right:", type="tertiary", help="Show Sources", on_click=toggle_panel, args=("left",))
+    if MOCK:
+        prep_ui.mock_page(role, writers, index, cfg)
+        st.stop()
     st.button("", key="m_open_right", icon=":material/chevron_left:", type="tertiary", help="Show Evidence", on_click=toggle_panel, args=("right",))
     st.markdown('<a class="to-bottom" href="#chat-end" aria-label="Go to the bottom of the conversation" title="Go to the bottom">'
                 '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M6 13l6 6 6-6"/></svg></a>',

@@ -726,11 +726,30 @@ def test_mock_default_source_shows_no_picker_and_starts_as_before():
     assert at.session_state[f"mockstate_{ROLE_SLUG}"]["items"][0]["resources"] == ""
 
 
-def test_mock_resources_need_a_pick_and_code_needs_a_yes():
+def source_keys(at):
+    """(documents, code projects) as ticked in the Sources list, leaving out your own profile and role files."""
+    keys = [c.key[len("src-"):] for c in at.checkbox if c.key and c.key.startswith("src-")]
+    own = ("profile/", "roles/")
+    return [k for k in keys if k != "sample_project" and not k.startswith(own)], [k for k in keys if k == "sample_project"]
+
+
+def test_mock_resources_start_with_documents_ticked_and_code_not():
     at = mock_with_resources()
     assert not at.exception, at.exception
-    assert next(b for b in at.button if b.label == "Start").disabled, "nothing picked yet"
-    at.multiselect(key=f"mockres_code_{ROLE_SLUG}").set_value(["sample_project"]).run()
+    docs, code = source_keys(at)
+    assert docs and all(at.checkbox(key=f"src-{d}").value for d in docs)
+    assert code and not at.checkbox(key=f"src-{code[0]}").value
+    next(b for b in at.button if b.label == "Start").click().run()
+    assert not at.exception, at.exception
+    st_ = at.session_state[f"mockstate_{ROLE_SLUG}"]
+    assert set(st_["groups"]) == set(docs) and not st_["code"], "your own files go along already and are not repeated as resources"
+
+
+def test_mock_resources_need_a_tick_and_code_needs_a_yes():
+    at = mock_with_resources()
+    at.button(key="sel-none").click().run()
+    assert next(b for b in at.button if b.label == "Start").disabled, "nothing ticked in Sources"
+    at.checkbox(key="src-sample_project").check().run()
     assert next(b for b in at.button if b.label == "Start").disabled, "code needs its own yes"
     at.checkbox(key=f"mockcode_ok_{ROLE_SLUG}_0").check().run()
     next(b for b in at.button if b.label == "Start").click().run()
@@ -742,25 +761,26 @@ def test_mock_resources_need_a_pick_and_code_needs_a_yes():
     assert at.checkbox(key=f"mockcode_{ROLE_SLUG}_fb1_0").value is False
 
 
-def test_mock_papers_only_need_no_code_yes_and_are_listed_on_the_page():
+def test_mock_documents_only_need_no_code_yes_and_are_listed_on_the_page():
     at = mock_with_resources()
-    options = at.multiselect(key=f"mockres_local_{ROLE_SLUG}").options
-    assert options and not any(o.startswith(("profile/", "roles/")) for o in options)
-    at.multiselect(key=f"mockres_local_{ROLE_SLUG}").set_value([options[0]]).run()
+    docs, _ = source_keys(at)
+    at.button(key="sel-none").click().run()
+    at.checkbox(key=f"src-{docs[0]}").check().run()
     next(b for b in at.button if b.label == "Start").click().run()
     assert not at.exception, at.exception
-    assert any("Questions drawn from" in c.value and options[0].split("/")[-1] in c.value for c in at.caption)
+    assert any("Questions drawn from" in c.value and docs[0].split("/")[-1] in c.value for c in at.caption)
 
 
-def test_mock_pick_sections_of_a_paper_limits_what_is_sent_and_is_shown():
+def test_mock_pick_sections_of_a_document_limits_what_is_sent_and_is_shown():
     at = mock_with_resources()
-    options = at.multiselect(key=f"mockres_local_{ROLE_SLUG}").options
-    paper = next((o for o in options if "library" in o.lower() or o.endswith(".md")), options[0])
-    at.multiselect(key=f"mockres_local_{ROLE_SLUG}").set_value([paper]).run()
+    docs, _ = source_keys(at)
+    paper = next((o for o in docs if "library" in o.lower() or o.endswith(".md")), docs[0])
+    at.button(key="sel-none").click().run()
+    at.checkbox(key=f"src-{paper}").check().run()
     assert not at.exception, at.exception
     radios = [r for r in at.radio if r.key and r.key.startswith(f"mockfocus_{ROLE_SLUG}_")]
     if not radios:
-        pytest.skip("the example paper has a single section, so there is nothing to pick")
+        pytest.skip("the example document has a single section, so there is nothing to pick")
     radios[0].set_value("Pick sections").run()
     assert next(b for b in at.button if b.label == "Start").disabled, "pick at least one section"
     sec = next(m for m in at.multiselect if m.key and m.key.startswith(f"mocksec_{ROLE_SLUG}_"))
@@ -771,6 +791,18 @@ def test_mock_pick_sections_of_a_paper_limits_what_is_sent_and_is_shown():
     assert state["focus"] and any("sections:" in n for n in state["res_names"])
 
 
+def test_mock_page_shows_the_sources_list_and_keeps_the_ticks_across_tabs():
+    at = mock_with_resources()
+    docs, _ = source_keys(at)
+    assert any(b.key and b.key.startswith("pv-") for b in at.button), "same list as Research, with the preview buttons"
+    assert any(b.key and b.key.startswith("rm-") for b in at.button), "and the remove buttons"
+    at.checkbox(key=f"src-{docs[0]}").uncheck().run()
+    at.session_state[f"mode_{ROLE_SLUG}"] = "Research"
+    at.run()
+    assert not at.exception, at.exception
+    assert at.checkbox(key=f"src-{docs[0]}").value is False, "unticking on the mock page is the same as unticking on Research"
+
+
 def test_mock_page_has_a_how_this_works_box_that_matches_the_rules():
     at = run_app()
     at.session_state[f"mode_{ROLE_SLUG}"] = "Mock interview"
@@ -778,4 +810,4 @@ def test_mock_page_has_a_how_this_works_box_that_matches_the_rules():
     assert not at.exception, at.exception
     box = next(e for e in at.expander if e.label == "How this works")
     text = " ".join(m.value for m in box.markdown)
-    assert "Whole paper, varied" in text and "Nothing is sent until you press Start" in text and "fresh yes" in text
+    assert "Whole document, varied" in text and "Nothing is sent until you press Start" in text and "fresh yes" in text
