@@ -106,6 +106,39 @@ def test_feedback_has_no_scores_and_forbids_invented_detail(role):
     assert "score" not in u.lower().replace("no scores", "")
 
 
+def test_coding_prompts_ask_for_a_problem_in_the_language_and_review_the_code(role):
+    system, user = mock.question_prompt(role, "Coding", ["Reverse a list."], language="SQL")
+    assert "coding problem" in user and "SQL" in user and "worked example" in user and "Reverse a list." in user
+    assert "no hints" in user.lower() and "cannot run it" in system
+    system, user = mock.feedback_prompt(role, "Coding", "Problem?", "def f(): pass", language="Python")
+    assert "THE PERSON'S CODE:\ndef f(): pass" in user and "Python" in user
+    for section in ("Correctness and edge cases", "Complexity", "Readability", "A stronger solution"):
+        assert section in user
+    assert "spoken" not in user and "[add:" not in user, "code is not rewritten as a spoken answer"
+    assert "cannot run it" in system
+
+
+def test_the_other_types_are_not_changed_by_coding(role):
+    for kind in ("Behavioral", "Technical"):
+        system, user = mock.question_prompt(role, kind, [])
+        assert "coding" not in user.lower() and "cannot run it" not in system
+    assert "spoken style" in mock.feedback_prompt(role, "Behavioral", "Q?", "A.")[1]
+
+
+def test_empty_code_is_refused_before_the_model_is_called(role):
+    p = FakeProvider()
+    with pytest.raises(ValueError, match="code"):
+        mock.feedback(p, role, "Coding", "Q?", "  ")
+    assert not p.calls
+
+
+def test_a_coding_interview_is_saved_with_its_code_in_a_code_block(role):
+    mock.record(role, "Coding", "2026-10-26 09:30", [{"question": "Q1?", "answer": "def f():\n    return 1\n", "feedback": "F1"}, {"question": "Q2?"}],
+                language="Python")
+    t = next(prep.prep_dir(role).glob("mock_*.md")).read_text()
+    assert "coding, Python" in t and "### Your code" in t and "```python\ndef f():\n    return 1\n```" in t and "Q2?" in t
+
+
 def test_empty_answer_is_refused_before_the_model_is_called(role):
     p = FakeProvider()
     with pytest.raises(ValueError):
