@@ -20,6 +20,15 @@ def test_money_is_not_read_as_a_formula_but_real_formulas_are_left_alone():
     assert "$x + 5$" in out and "$2x$" in out
 
 
+def test_a_formula_that_starts_with_a_decimal_is_not_read_as_money():
+    for f in (r"$0.036 \pm 0.014$", r"$0.5 x + 1$", r"$3.14 \times r^2$"):
+        assert safetext.math(f"was relatively high ({f}) and") == f"was relatively high ({f}) and", f
+    o, c = safetext.MARK_OPEN, safetext.MARK_CLOSE
+    assert safetext.math_with_marks(rf"high ($0.036 \pm 0.014$){o}0{c}.") == rf"high ($0.036 \pm 0.014$){o}0{c}."
+    out = safetext.math("It costs $0.50. Then $1.5 million, and $9.")        # real money with decimals is still escaped
+    assert "\\$0.50." in out and "\\$1.5 million" in out and "\\$9." in out
+
+
 def test_code_is_never_changed():
     text = "Use `re.compile(r'\\(\\d+\\)')` or:\n```\nprice = '$5'\nm = r'\\(a\\)'\n```"
     assert safetext.math(text) == text

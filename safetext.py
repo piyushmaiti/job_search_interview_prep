@@ -18,7 +18,7 @@ def strip_images(text: str) -> str:
 _CODE = re.compile(r"(```.*?```|`[^`\n]*`)", re.S)
 _PAREN = re.compile(r"\\\((.+?)\\\)", re.S)
 _BRACKET = re.compile(r"\\\[(.+?)\\\]", re.S)
-_MONEY = re.compile(r"(?<![\\$\w])\$(?=\d[\d,]*(?:\.\d+)?[kKmMbB]?(?:\s+[A-Za-z]{2,}|[.,;:)!?]|\s*$))", re.M)
+_MONEY = re.compile(r"(?<![\\$\w])\$(?=\d[\d,]*(?:\.\d+)?[kKmMbB]?(?:\s+[A-Za-z]{2,}|[.,;:)!?](?!\d)|\s*$))", re.M)
 _MATH = re.compile(r"(?<![\\$])\$\$.+?(?<!\\)\$\$|(?<![\\$])\$(?=[^\s$])[^$\n]+?(?<![\s\\])\$(?!\d)", re.S)
 MARK_OPEN, MARK_CLOSE = "", ""
 _MARKS = re.compile(f"{MARK_OPEN}\\d+{MARK_CLOSE}")
